@@ -44,6 +44,7 @@ markers = [
     "live: ağ erişimi gerektiren canlı entegrasyon testleri (deselect: -m 'not live')",
 ]
 testpaths = ["tests"]
+pythonpath = ["."]  # scripts/ paketinin (build_index) test'lerden import edilebilmesi için
 
 [tool.ruff]
 line-length = 110
