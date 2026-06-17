@@ -1,0 +1,446 @@
+
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+
+
+
+
+
+
+
+
+<html>
+<head>
+	<title>Ulusal Tez Merkezi | Hata Oluştu
+	</title>
+	<meta http-equiv="Content-type" content="text/html; charset=utf-8"/>
+	<meta name="description"
+		  content="Yükseköğretim Kurulu Tez Merkezi'nde bulunan basılı bütün tezleri tarayarak, üye olduktan sonra izinli tezlere tam metin(pdf) olarak erişebilirisiniz.">
+	<meta name="keywords" content="Yök, Yükseköğretim Kurulu Başkanlığı, Tez, Thesis, Dissertation">
+
+	<link rel="stylesheet" href="/UlusalTezMerkezi/css/style.css" type="text/css" media="all"/>
+	<link rel="stylesheet" href="/UlusalTezMerkezi/css/jquery.jcarousel.css" type="text/css" media="all"/>
+	<!--[if IE 6]>
+	<link rel="stylesheet" href="css/ie6.css" type="text/css" media="all"/>
+	<![endif]-->
+	<link rel="shortcut icon" href="/UlusalTezMerkezi/css/images/yokIcon.ico"/>
+	<SCRIPT language="JavaScript" src="js/genel_son.js?12122019"></SCRIPT>
+	<link href="/UlusalTezMerkezi/css/ustMenu.css" rel="stylesheet" type="text/css">
+	
+</head>
+<body>
+
+<div class="page">
+	
+
+
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="css/userMenu.css" rel="stylesheet" type="text/css">
+    <link href="css/header.css" rel="stylesheet" type="text/css">
+    <link href="theme/styles.css" rel="stylesheet" type="text/css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <SCRIPT language="JavaScript" src="js/genel_son.js?12122019"></SCRIPT>
+
+    
+
+    <script>
+        function SilAcik(url) {
+            var form = document.getElementById('headerLoginForm');
+            if (!form) {
+                form = document.createElement('form');
+                form.id = 'headerLoginForm';
+                form.method = 'GET';
+                form.style.display = 'none';
+                document.body.appendChild(form);
+            }
+            form.target = '_self';
+            form.action = url;
+            form.submit();
+        }
+
+        function handleLogout() {
+            var url = "CikisServlet?islem=kul000";
+            window.location.href = url;
+        }
+
+        function toggleMobileMenu() {
+            var nav = document.getElementById("main-nav");
+            if (nav.classList.contains("open")) {
+                nav.classList.remove("open");
+            } else {
+                nav.classList.add("open");
+            }
+        }
+
+        window.onscroll = function() {
+          const container = document.getElementById("logo_container");
+
+          if (document.body.scrollTop > 80 || document.documentElement.scrollTop > 80) {
+            container.style.height = "70px";
+          } else {
+            container.style.height = "100px";
+          }
+        };
+
+    </script>
+</head>
+<body>
+
+    <div class="Header home-page">
+        <div class="Header-inner">
+          <div class="menu-sup">
+            <div class="menu">
+                <div class="mobile-nav-toggle" onclick="toggleMobileMenu()">
+                    <i class="fas fa-bars" style="color:white;"></i>
+                </div>
+
+              <a
+                class="logo m-s flex-group-c position-relative menu-logo"
+                href="/UlusalTezMerkezi"
+                style="transition: all 800ms ease 0s"
+              >
+                <div class="logo-container" id="logo_container" style="height: 100px">
+                  <img
+                    id="modern_logo"
+                    class="tr-logo"
+                    src="https://www.yok.gov.tr/front/logos/yok_logo_beyaz.png"
+                    alt="YÖK Logo"
+                    style="width: 175px; transition: 400ms; margin: auto; display: block;"
+                  />
+                </div>
+              </a>
+              <nav id="main-nav" style="flex: 1">
+                <ul class="nav-menu" id="navMenu">
+                  <li class="nav-item" style="height: 100px">
+                    <a href="giris.jsp" class="nav-link">Ana Sayfa</a>
+                  </li>
+                  <li class="nav-item" style="height: 100px">
+                    <a href="tarama.jsp" class="nav-link">Arama</a>
+                  </li>
+                    <li class="nav-item" style="height: 100px">
+                    <a href="sss.jsp" class="nav-link">SSS</a>
+                    </li>
+                  <li class="nav-item mobile-lang-row">
+                     <div class="lang-container">
+                         <a href="LanguageServlet?dil=trHat" class="lang-box active">TR</a>
+                         <span class="lang-divider">/</span>
+                         <a href="LanguageServlet?dil=enHat" class="lang-box ">EN</a>
+                     </div>
+                  </li>
+                </ul>
+              </nav>
+              <div class="up-right">
+                <div class="language-selector desktop-only">
+                    <button class="language-btn">
+                        <span>TR</span>
+                        <i class="fas fa-chevron-down"></i>
+                    </button>
+
+                    <div class="language-dropdown">
+                        
+                            <a href="LanguageServlet?dil=enHat" class="language-option">
+                                <span>EN</span>
+                            </a>
+                        
+                    </div>
+                </div>
+                
+
+                    <button type="button" class="login-btn" onclick="SilAcik('login')"
+                            title="Üye girişi yapmadan tez arama ve indirme işlemlerini yapabilirsiniz.">
+                        <i class="fas fa-user-lock"></i> <span>E-Devlet ile Giriş</span>
+                    </button>
+
+                
+              </div>
+            </div>
+          </div>
+        </div>
+
+<!--         <div class="logo"> -->
+<!--             <a href="http://192.168.146.101:8080/UlusalTezMerkezi"><img src="css/images/yok_logo_new.png" -->
+<!--                                                                   alt="Company Logo"></a> -->
+<!--         </div> -->
+
+<!--         <div class="header-right"> -->
+<!--             <nav class="nav-links"> -->
+<!--                 <a href="giris2026.jsp">Ana Sayfa -->
+<!--                 </a> -->
+<!--                 <a href="tarama2026.jsp">Arama -->
+<!--                 </a> -->
+<!--                 <a href="sss.jsp">SSS -->
+<!--                 </a> -->
+<!--             </nav> -->
+
+<!--             <div class="header-actions"> -->
+<!--                 <div class="lang-switcher"> -->
+<!--                     <a href="LanguageServlet?dil=trHat" -->
+<!--                        class="lang-link">TR</a> -->
+
+<!--                     <span class="separator">|</span> -->
+
+<!--                     <a href="LanguageServlet?dil=enHat" -->
+<!--                        class="lang-link">EN</a> -->
+<!--                 </div> -->
+<!--                  -->
+<!--                 <input type="button" class="login-btn" name="  E-Devlet ile Giriş" -->
+<!--                        title="Üye girişi yapmadan tez tarama ve indirme işlemlerini yapabilirsiniz. (You can search and download theses without login.)" -->
+<!--                        onClick="SilAcik()" value="E-Devlet ile Giriş"> -->
+
+<!--                  -->
+<!--             </div> -->
+
+<!--         </div> -->
+     </div>
+
+</body>
+
+<style>
+ .mobile-nav-toggle, .mobile-lang-row { display: none; }
+
+ @media screen and (max-width: 992px) {
+     .menu {
+         display: flex !important;
+         justify-content: space-between !important;
+         align-items: center !important;
+/*          position: relative; */
+         padding: 0 15px;
+     }
+
+     .mobile-nav-toggle {
+         display: block;
+         flex: 1;
+         font-size: 22px;
+         cursor: pointer;
+     }
+
+     .menu-logo {
+         flex: 2;
+         display: flex;
+/*          justify-content: center; */
+         margin: 0 !important;
+     }
+
+     .up-right {
+         flex: 1;
+         display: flex;
+         justify-content: flex-end;
+     }
+
+     .desktop-only, .language-selector { display: none; !important}
+     .login-btn span { display: none; }
+
+
+     #main-nav {
+         display: none;
+         position: absolute;
+         top: 100%;
+         left: 0;
+         width: 100%;
+         background: #fff;
+         z-index: 9999;
+         box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+     }
+
+     #main-nav.open {
+         display: block;
+     }
+
+     .nav-menu {
+         flex-direction: column !important;
+         width: 100%;
+         background: #e12228;
+     }
+
+     .nav-item {
+         height: auto !important;
+         /*width: 100%;*/
+         border-bottom: 1px solid #eee;
+     }
+
+     .nav-link {
+/*          padding: 20px; */
+         display: block;
+         color: #333;
+     }
+
+    #modern_logo {
+        all: unset !important;
+        max-width: 110px !important; /* Smaller logo for mobile */
+        height: auto !important;
+        display: block;
+        margin: 0 auto !important;
+     }
+
+    #logo_container {
+         all: unset !important;
+         display: block !important;
+         text-align: center;
+     }
+
+    /* Container for the language section */
+    .mobile-lang-row {
+/*         padding: 25px 0 !important; */
+        display: flex !important;
+        justify-content: center !important;
+        border-bottom: 1px solid rgba(255,255,255,0.2) !important;
+    }
+
+    .lang-container {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+    }
+
+    /* The Square Buttons */
+    .lang-box {
+        display: flex !important;
+        align-items: center;
+        justify-content: center;
+        width: 40px !important;
+        height: 40px !important;
+        border: 2px solid #ffffff !important; /* White outline */
+        border-radius: 8px !important;       /* Slightly rounded corners */
+        color: #ffffff !important;           /* White text */
+        text-decoration: none !important;
+        font-weight: bold !important;
+        font-size: 14px !important;
+        background: transparent !important;
+        transition: all 0.3s ease;
+        padding: 0 !important;               /* Reset any inherited padding */
+    }
+
+    /* The Divider (/) */
+    .lang-divider {
+        color: rgba(255, 255, 255, 0.6);
+        font-size: 20px;
+        font-weight: 300;
+    }
+
+    /* Active/Hover state (Optional: fills the box when active) */
+    .lang-box.active {
+        background-color: rgba(255, 255, 255, 0.2) !important;
+        box-shadow: 0 0 10px rgba(255,255,255,0.3);
+    }
+
+    .lang-box:hover {
+        background-color: #ffffff !important;
+        color: #e63946 !important; /* Text turns red on hover */
+    }
+
+ }
+
+
+
+
+</style>
+
+
+	<main class="error-container" >
+		<div class="error-message">
+			<p>SİSTEMDE BEKLENMEDİK BİR HATA OLUŞTU.LÜTFEN TEKRAR DENEYİNİZ
+			</p>
+		</div>
+	</main>
+
+	
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<footer class="main-footer">
+  <div class="footer-container">
+    <div class="footer-left">
+      © 2026 T.C. Yükseköğretim Kurulu. Tüm hakları saklıdır.
+    </div>
+
+    <div class="footer-right">
+      <a href="iletisim.jsp">İletişim</a>
+      <a href="sistemGiris.jsp">Enstitü girişi için tıklayınız.</a>
+    </div>
+  </div>
+</footer>
+
+<style>
+    .main-footer {
+      color: #4b5563;
+      padding: 20px 0;
+      font-family: sans-serif;
+      border-top: 1px solid #eee;
+    }
+
+    .footer-container {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0 20px;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .footer-right {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      gap: 20px;
+    }
+
+    /* Styling the links */
+    .main-footer a {
+      color: #4b5563;
+      text-decoration: none;
+      margin-left: 0;
+      white-space: nowrap;
+      transition: opacity 0.3s;
+    }
+
+    .main-footer a:hover {
+      opacity: 0.7;
+      text-decoration: underline;
+    }
+
+    .footer-left a {
+      margin-left: 0;
+      font-weight: bold;
+    }
+
+    @media (max-width: 600px) {
+      .footer-container {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+      }
+
+      .footer-right {
+        align-items: flex-start;
+        width: 100%;
+      }
+    }
+</style>
+</div>
+
+</body>
+</html>
+
+<style>
+
+	.error-container {
+		/*flex: 1; */
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		text-align: center;
+		background-color: #f9f9f9;
+		height: 650px;
+	}
+
+	.error-message h1 {
+		font-size: 2.5rem;
+		font-weight: 300;
+		color: #555;
+	}
+
+	.error-message p {
+		margin-top: 10px;
+		color: #888;
+	}
+</style>
