@@ -1018,6 +1018,61 @@ async def test_university_resource_returns_index_note(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# related_theses — indeks boş/ince ise canlı fallback
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_related_theses_live_fallback_when_index_empty(monkeypatch):
+    """İndeks boşsa kaynak tezin konu/anahtar kelimelerinden canlı benzer tez türetir."""
+    monkeypatch.setattr(_detail_mod, "get_thesis",
+                        lambda *a, **kw: _async_return(_OPEN_THESIS))
+    monkeypatch.setattr(_index_mod, "get_default_index", lambda: _EmptyIndex())
+
+    related_hits = [
+        SearchHit(kayit_no="111", tez_no="t111", title_tr="Yapay Zeka ve Eğitim"),  # kaynak
+        SearchHit(kayit_no="888", tez_no="t888", title_tr="Yapay zeka uygulamaları", year=2021),
+        SearchHit(kayit_no="999", tez_no="t999", title_tr="Eğitimde yapay zeka", year=2020),
+    ]
+
+    async def fake_keyword(query, **kw):
+        return SearchResult(hits=related_hits, total_found=3, shown=3,
+                            coverage_complete=True, source="live", notes=[])
+
+    monkeypatch.setattr(_search_mod, "search_keyword", fake_keyword)
+
+    srv = _import_server()
+    out = await srv.related_theses("111", "t111")
+
+    kayits = [r["kayit_no"] for r in out["results"]]
+    assert "111" not in kayits  # kaynak tez hariç tutulur
+    assert out["count"] > 0
+    assert out["source"] in ("live", "hybrid")
+
+
+@pytest.mark.asyncio
+async def test_related_theses_prefers_index_when_available(monkeypatch):
+    """İndekste benzer tez varsa canlıya çıkılmaz (source=index)."""
+    monkeypatch.setattr(_detail_mod, "get_thesis",
+                        lambda *a, **kw: _async_return(_OPEN_THESIS))
+    monkeypatch.setattr(_index_mod, "get_default_index",
+                        lambda: _IndexWithHits([_HIT_2]))
+    called = {"live": False}
+
+    async def fake_keyword(query, **kw):
+        called["live"] = True
+        return SearchResult(hits=[], total_found=0, shown=0,
+                            coverage_complete=True, source="live", notes=[])
+
+    monkeypatch.setattr(_search_mod, "search_keyword", fake_keyword)
+
+    srv = _import_server()
+    out = await srv.related_theses("111", "t111")
+    assert out["source"] == "index"
+    assert called["live"] is False  # indeks doluysa canlıya gerek yok
+
+
+# ---------------------------------------------------------------------------
 # Advisor/author isim normalizasyonu — canlı çağrıya 'Ad Soyad' geçilmeli
 # ---------------------------------------------------------------------------
 

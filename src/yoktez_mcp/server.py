@@ -779,23 +779,78 @@ async def related_theses(kayit_no: str, tez_no: str, limit: int = 10) -> dict:
     idx = index.get_default_index()
     result = idx.related(thesis, limit=limit)
 
+    # İndekste yeterli örtüşme varsa → indeks sonuçları (hızlı, BM25-sıralı).
+    if result.total_found > 0:
+        return {
+            "source_kayit_no": kayit_no,
+            "source_title": thesis.title_tr or thesis.title_en,
+            "source": "index",
+            "total_found": result.total_found,
+            "count": len(result.hits),
+            "results": [_hit_to_dict(h) for h in result.hits],
+            "notes": [
+                f"KAPSAM: benzerlik yerel indeksteki {result.total_found} tez "
+                "üzerinde hesaplandı."
+            ],
+            "source_notice": SOURCE_NOTICE,
+        }
+
+    # İndeks boş/ince → kaynak tezin konu/anahtar kelime/başlığından CANLI türet.
+    seed_raw = (
+        list(thesis.keywords_tr or [])
+        + list(thesis.keywords_en or [])
+        + list(thesis.subjects or [])
+        + ([thesis.title_tr] if thesis.title_tr else [])
+    )
+    seed_terms: list[str] = []
+    for raw in seed_raw:
+        seed_terms.extend(index._query_terms(raw))
+    seed_terms = list(dict.fromkeys(seed_terms))[:6]  # dedup + makul üst sınır
+    query = " ".join(seed_terms)
+
     notes: list[str] = []
-    if result.total_found == 0:
+    live_hits: list = []
+    live_error: str | None = None
+    if query:
+        try:
+            # OR ile geniş aday havuzu → alaka filtresiyle daralt (recall + precision).
+            live_result = await search.search_keyword(query, field="all", match="contains", op="or")
+            live_hits = relevance.relevance_filter_sort(
+                live_result.hits, query, require_all_terms=False, min_terms=1
+            )
+        except Exception as exc:  # noqa: BLE001
+            live_error = f"{type(exc).__name__}: {exc}"
+
+    # Kaynak tezin kendisini hariç tut.
+    live_hits = [h for h in live_hits if h.kayit_no != kayit_no]
+    _warm_index(live_hits)
+    page = live_hits[:limit]
+
+    if not query:
         notes.append(
-            "İlgili tez bulunamadı — indeks boş veya yeterli konu örtüşmesi yok."
+            "Benzer tez türetilemedi — kaynak tezde konu/anahtar kelime/başlık bilgisi yok."
+        )
+    elif live_error:
+        notes.append(
+            f"İndeks boş; kaynak tezin konularından canlı benzerlik araması başarısız: {live_error}."
+        )
+    elif not page:
+        notes.append(
+            "İlgili tez bulunamadı (yerel indeks boş; canlı arama da sonuç vermedi)."
         )
     else:
         notes.append(
-            f"KAPSAM: benzerlik yalnızca yerel indeksteki {result.total_found} tez üzerinde hesaplandı."
+            f"İndeks boş olduğundan benzerlik, kaynak tezin konularından "
+            f"('{query}') CANLI YÖKTEZ üzerinden türetildi."
         )
 
     return {
         "source_kayit_no": kayit_no,
         "source_title": thesis.title_tr or thesis.title_en,
-        "source": "index",
-        "total_found": result.total_found,
-        "count": len(result.hits),
-        "results": [_hit_to_dict(h) for h in result.hits],
+        "source": "live" if page else "index",
+        "total_found": None,
+        "count": len(page),
+        "results": [_hit_to_dict(h) for h in page],
         "notes": notes,
         "source_notice": SOURCE_NOTICE,
     }

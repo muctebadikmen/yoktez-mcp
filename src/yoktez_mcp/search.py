@@ -315,6 +315,7 @@ async def search_keyword(
     *,
     field: str = "title",
     match: str = "contains",
+    op: str = "and",
 ) -> SearchResult:
     """YÖKTEZ islem=4 anahtar kelime araması yapar.
 
@@ -356,8 +357,10 @@ async def search_keyword(
 
     # Doğrulanmış minimal islem=4 POST — izin/Tur/yıl EKLENMEMELİ.
     # Çok-kelimeli sorgu boolean slotlara bölünür (gerçek AND); tek kelime tek slot.
+    if op not in ("and", "or", "not"):
+        raise ValueError(f"Geçersiz op={op!r}. Geçerli: 'and', 'or', 'not'.")
     data = {
-        **_build_keyword_slots(query),
+        **_build_keyword_slots(query, op),
         "nevi": nevi,
         "tip": tip,
         "islem": "4",
