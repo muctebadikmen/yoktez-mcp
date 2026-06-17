@@ -102,3 +102,20 @@ Programmatic `POST SearchTez` with `islem=2` (advanced/filtered) **could not be 
 **Consequence for the build:** live type/year/university-filtered search and the Faz 5 Tur×yıl×ABD seed-harvest slicing are blocked on this crack. Keyword search (islem=4) and keyword-field discovery (advisor via nevi=3, author via nevi=2) are unaffected. Plan Task 6 falls back to index-side filtering.
 
 New fixtures: `islem2_attempt_hata_olustu.html` (representative crash), `islem4_control_302_headers.txt` (control proof).
+
+---
+
+## Addendum #2 — `islem=2` CRACKED (Faz 5 probe, 2026-06-18) ✅ supersedes the above
+
+`islem=2` advanced/filtered search **works** when the POST sends EVERY GForm field with the right defaults. The earlier "Hata Oluştu" came from incomplete/malformed bodies. Verified working shape (see `tests/fixtures/probe/t4c_islem2_*.html`):
+
+- Unused **facet codes = `"0"`** (`Enstitu`, `ABD`, `Tur`, `yil1`, `yil2`, `izin`, `Dil`, `Bolum`), **`Durum="3"`**, `source="TR"`, submit `-find="  Bul"`, `islem="2"`.
+- Unused **text fields = `""`** (`uniad`, `ensad`, `abdad`, `Konu`, `TezAd`, `AdSoyad`, `DanismanAdSoyad`, `Dizin`, `TezNo`, `Metin`).
+- University scope = encrypted `Universite` kod **+** `uni_yoksis_id` together (both from facets.json).
+- Result page is `tezSorguSonucYeni.jsp` — **parses identically** to islem=4 (`parse_results`, no drift).
+
+Measured: Tur=2+year=2023 → 13050 total (2000 cap); İstanbul Ü. × Doktora × 2023 → 586; DanismanAdSoyad="VEYSEL BOZKURT" → 58.
+
+**Also corrected:** advisor `nevi=3` was never broken — it works for "Ad Soyad" (given-first) names; the 0-result bug was passing "Soyad, Ad" (surname-first). Multi-word search needs the `keyword`/`keyword1`/`keyword2` + `ops_field` boolean slots, not a single phrase slot.
+
+**Build impact:** islem=2 is implemented as `search.search_advanced`; `list_university_theses` has a live path; `scripts/build_index.py` harvests via Universite×Tur×yıl slicing (auto-subdivide by Dil→izin when a slice exceeds 2000).

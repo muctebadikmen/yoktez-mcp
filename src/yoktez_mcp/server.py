@@ -628,7 +628,7 @@ async def find_advisor_theses(advisor: str, limit: int = 20) -> dict:
     # Canlı YÖKTEZ (danışman alanında arama)
     live_hits: list = []
     live_error: str | None = None
-    live_total = 0
+    live_total: int | None = None
     live_complete = True
     try:
         # Canlı arama 'Ad Soyad' biçimi ister (probe: 'Soyad, Ad' → 0 sonuç).
@@ -686,7 +686,7 @@ async def find_author_theses(author: str, limit: int = 20) -> dict:
 
     live_hits: list = []
     live_error: str | None = None
-    live_total = 0
+    live_total: int | None = None
     live_complete = True
     try:
         live_result = await search.search_keyword(
@@ -1021,7 +1021,7 @@ async def _resolve_advisor(name: str, limit: int = 20) -> dict:
     """find_advisor_theses aracıyla aynı mantık — araç ve resource paylaşır."""
     live_hits: list = []
     live_error: str | None = None
-    live_total = 0
+    live_total: int | None = None
     live_complete = True
     try:
         live_result = await search.search_keyword(

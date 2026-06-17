@@ -1,15 +1,16 @@
 """yoktez_mcp.index — SQLite FTS5 tez indeksi + Türkçe-duyarlı arama.
 
-Hibrit strateji: önceden derlenmiş seed index (``data/seed_index.db.gz``)
-anında yüklenerek sıcak başlar; ``on-demand`` scraping ile ek tezler eklenir.
+Hibrit strateji: önceden derlenmiş seed index (``data/seed_index.db.gz``,
+``scripts/build_index.py`` ile harvest edilir) anında yüklenerek sıcak başlar;
+ayrıca her canlı aramadan dönen sonuçlar ``upsert_hits`` ile indekse yazılır
+(on-demand warming, server._warm_index üzerinden) → indeks kullanımla ısınır.
 
 Türkçe normalizasyon (``tr_fold``) hem İNDEKSE hem SORGUYA **simetrik** uygulanır —
 text.py'deki tr_fold import edilir, burada yeniden tanımlanmaz.
 
-NOT: Şu an gönderilen seed_index.db.gz bir yer tutucudur (sadece _meta tablosu,
-tez satırı yok). ``get_default_index()`` bunu algılar ve boş ama işlevsel bir
-in-memory indeks döndürür. Faz 5'te gerçek seed derlendiğinde bu loader onu doğrudan
-servis edecektir.
+NOT: Eğer gönderilen seed_index.db.gz bir yer tutucuysa (sadece _meta tablosu,
+tez satırı yok), ``get_default_index()`` bunu algılar ve boş ama işlevsel bir
+in-memory indeks döndürür; gerçek seed derlendiğinde loader onu doğrudan servis eder.
 """
 
 from __future__ import annotations

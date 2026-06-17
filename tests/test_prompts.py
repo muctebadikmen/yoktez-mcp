@@ -136,14 +136,15 @@ def test_universite_uretim_haritasi_non_empty_and_mentions_tool():
     assert "ODTÜ" in text
 
 
-def test_universite_uretim_haritasi_mentions_islem2_limitation():
+def test_universite_uretim_haritasi_mentions_coverage():
     mcp = _MockMCP()
     register(mcp)
     text = mcp.call("universite_uretim_haritasi", university="Boğaziçi")
-    # islem=2 kısıtlamasına dürüstçe atıf
+    # Kapsam/kaynak (canlı islem=2 + indeks) dürüstçe atıf
     assert (
         "islem=2" in text
         or "indeks" in text.lower()
         or "index" in text.lower()
-        or "sınırlı" in text.lower()
+        or "kapsam" in text.lower()
+        or "source" in text.lower()
     )

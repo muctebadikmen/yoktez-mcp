@@ -1097,6 +1097,34 @@ async def test_find_advisor_normalizes_surname_first(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_find_advisor_total_found_none_when_live_fails(monkeypatch):
+    """Canlı katkı yoksa total_found 0 DEĞİL None olmalı (search_theses ile tutarlı)."""
+    async def _raise(*a, **kw):
+        raise _search_mod.SearchError("boom")
+
+    monkeypatch.setattr(_search_mod, "search_keyword", _raise)
+    monkeypatch.setattr(_index_mod, "get_default_index",
+                        lambda: _IndexWithHits([_HIT_1]))
+    srv = _import_server()
+    out = await srv.find_advisor_theses("Veysel Bozkurt")
+    assert out["total_found"] is None
+    assert out["count"] >= 1  # indeksten geldi
+
+
+@pytest.mark.asyncio
+async def test_find_author_total_found_none_when_live_fails(monkeypatch):
+    async def _raise(*a, **kw):
+        raise _search_mod.SearchError("boom")
+
+    monkeypatch.setattr(_search_mod, "search_keyword", _raise)
+    monkeypatch.setattr(_index_mod, "get_default_index",
+                        lambda: _IndexWithHits([_HIT_1]))
+    srv = _import_server()
+    out = await srv.find_author_theses("Zeynep Kılıç")
+    assert out["total_found"] is None
+
+
+@pytest.mark.asyncio
 async def test_find_author_strips_title(monkeypatch):
     """find_author_theses canlı çağrıya ünvansız adı geçirmeli."""
     captured: dict = {}
