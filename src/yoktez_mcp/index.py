@@ -1,15 +1,16 @@
 """yoktez_mcp.index — SQLite FTS5 tez indeksi + Türkçe-duyarlı arama.
 
-Hibrit strateji: önceden derlenmiş seed index (``data/seed_index.db.gz``)
-anında yüklenerek sıcak başlar; ``on-demand`` scraping ile ek tezler eklenir.
+Hibrit strateji: önceden derlenmiş seed index (``data/seed_index.db.gz``,
+``scripts/build_index.py`` ile harvest edilir) anında yüklenerek sıcak başlar;
+ayrıca her canlı aramadan dönen sonuçlar ``upsert_hits`` ile indekse yazılır
+(on-demand warming, server._warm_index üzerinden) → indeks kullanımla ısınır.
 
 Türkçe normalizasyon (``tr_fold``) hem İNDEKSE hem SORGUYA **simetrik** uygulanır —
 text.py'deki tr_fold import edilir, burada yeniden tanımlanmaz.
 
-NOT: Şu an gönderilen seed_index.db.gz bir yer tutucudur (sadece _meta tablosu,
-tez satırı yok). ``get_default_index()`` bunu algılar ve boş ama işlevsel bir
-in-memory indeks döndürür. Faz 5'te gerçek seed derlendiğinde bu loader onu doğrudan
-servis edecektir.
+NOT: Eğer gönderilen seed_index.db.gz bir yer tutucuysa (sadece _meta tablosu,
+tez satırı yok), ``get_default_index()`` bunu algılar ve boş ama işlevsel bir
+in-memory indeks döndürür; gerçek seed derlendiğinde loader onu doğrudan servis eder.
 """
 
 from __future__ import annotations
@@ -212,6 +213,36 @@ class SearchIndex:
                 (t.kayit_no, thesis_rowid),
             )
         c.commit()
+
+    # ----------------------------------------------------------- upsert_hits --
+
+    def upsert_hits(self, hits: list[SearchHit]) -> int:
+        """SearchHit (hafif arama kartı) satırlarını indekse upsert eder.
+
+        On-demand warming için: canlı aramadan dönen kartlar indekse yazılır,
+        böylece indeks kullanımla ısınır. Yalnızca kartta bulunan alanlar
+        (title/author/year/university/thesis_type) yazılır; abstract/keywords/
+        advisor boş kalır. ``kayit_no``'ya göre dedup-güvenli (upsert).
+        ``kayit_no``'su olan satır sayısını döndürür.
+        """
+        theses = [
+            Thesis(
+                kayit_no=h.kayit_no,
+                tez_no=h.tez_no or "",
+                thesis_no=h.thesis_no,
+                title_tr=h.title_tr,
+                title_en=h.title_en,
+                author=h.author,
+                year=h.year,
+                university=h.university,
+                thesis_type=h.thesis_type,
+            )
+            for h in hits
+            if h.kayit_no
+        ]
+        if theses:
+            self.upsert(theses)
+        return len(theses)
 
     # ---------------------------------------------------------------- search --
 

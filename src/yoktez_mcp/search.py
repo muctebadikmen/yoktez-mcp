@@ -20,6 +20,42 @@ from bs4 import BeautifulSoup
 
 from .http import post_form
 from .models import SearchHit, SearchResult
+from .text import tr_fold, tr_upper
+
+# Kişi-adı alanları: çok-kelime slot-AND'i bu alanlarda çalışmaz (nevi=2/3) ve
+# Türkçe ı/İ case-folding sunucuda hatalı → tek-phrase + tr_upper kullanılır.
+_PERSON_FIELDS = {"author", "advisor"}
+
+# Akademik ünvan token'ları (tr_fold edilmiş) — isim başından ayıklanır.
+_TITLE_TOKENS = {
+    tr_fold(t)
+    for t in {
+        "prof", "doç", "doc", "dr", "öğr", "ogr", "üyesi", "uyesi", "üye",
+        "yrd", "arş", "ars", "gör", "gor", "uzm", "öğretim", "ogretim",
+    }
+}
+
+
+def normalize_person_name(name: str) -> str:
+    """Kişi adını YÖKTEZ'in beklediği 'Ad Soyad' biçimine getirir.
+
+    Canlı probe ile doğrulandı: nevi=3 danışman araması 'Ad Soyad' ile çalışır
+    (58 sonuç), 'Soyad, Ad' (virgüllü) ile 0 döner. Ayrıca 'Prof. Dr.' / 'Doç. Dr.'
+    / 'Dr. Öğr. Üyesi' gibi ünvan ön ekleri eşleşmeyi bozar.
+
+    - Baştaki akademik ünvan token'larını ayıklar.
+    - 'Soyad, Ad' → 'Ad Soyad'.
+    - Fazla boşlukları sadeleştirir.
+    """
+    tokens = (name or "").split()
+    i = 0
+    while i < len(tokens) and tr_fold(tokens[i].rstrip(".")) in _TITLE_TOKENS:
+        i += 1
+    rest = " ".join(tokens[i:])
+    if "," in rest:
+        surname, _, given = rest.partition(",")
+        rest = f"{given.strip()} {surname.strip()}"
+    return " ".join(rest.split())
 
 # ---------------------------------------------------------------------------
 # Sabitler
@@ -44,6 +80,38 @@ _MATCH_TO_TIP: dict[str, str] = {
 
 # Hata sayfasını saptamak için belirleyici metin
 _ERROR_MARKER = "Geçersiz sorgulama"
+
+
+# ---------------------------------------------------------------------------
+# Çok-kelimeli sorgu → YÖKTEZ boolean slotları
+# ---------------------------------------------------------------------------
+
+
+def _build_keyword_slots(query: str, op: str = "and") -> dict[str, str]:
+    """Çok-kelimeli sorguyu YÖKTEZ'in boolean slotlarına 2-slot HALF-SPLIT ile dağıtır.
+
+    YÖKTEZ tek ``keyword``'ü phrase/substring olarak eşler; bütün sorgu tek slota
+    konunca kelime eklendikçe eşleşme 0'a düşer (probe ile doğrulandı). Çözüm:
+    ``keyword``/``keyword1`` + ``ops_field`` ile 2-yönlü AND.
+
+    Neden 2 slot (3 değil): probe kanıtı 3-yönlü AND'in 0'a çöktüğünü, 2-yönlü AND'in
+    daha iyi recall verdiğini gösterdi — sorguyu ortadan iki yarıya bölüp her yarıyı
+    bir slota phrase olarak koymak, anlamlı kelime gruplarını ("yapay zeka", "ceza
+    hukuku") birlikte tutar: "yapay zeka hukuk"→16, "yapay zeka ceza hukuku"→2.
+    """
+    words = query.split()
+    if len(words) <= 1:
+        return {
+            "keyword": query.strip(), "keyword1": "", "keyword2": "",
+            "ops_field": op, "ops_field1": op,
+        }
+    mid = (len(words) + 1) // 2  # tek sayıda ilk yarı bir fazla kelime alır
+    return {
+        "keyword": " ".join(words[:mid]),
+        "keyword1": " ".join(words[mid:]),
+        "keyword2": "",
+        "ops_field": op, "ops_field1": op,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -252,6 +320,7 @@ async def search_keyword(
     *,
     field: str = "title",
     match: str = "contains",
+    op: str = "and",
 ) -> SearchResult:
     """YÖKTEZ islem=4 anahtar kelime araması yapar.
 
@@ -292,17 +361,100 @@ async def search_keyword(
         )
 
     # Doğrulanmış minimal islem=4 POST — izin/Tur/yıl EKLENMEMELİ.
-    data = {
-        "keyword": query,
-        "keyword1": "",
-        "keyword2": "",
-        "ops_field": "and",
-        "ops_field1": "and",
-        "nevi": nevi,
-        "tip": tip,
-        "islem": "4",
-    }
+    # Çok-kelimeli sorgu boolean slotlara bölünür (gerçek AND); tek kelime tek slot.
+    if op not in ("and", "or", "not"):
+        raise ValueError(f"Geçersiz op={op!r}. Geçerli: 'and', 'or', 'not'.")
+
+    if field in _PERSON_FIELDS:
+        # Kişi adı: tek-phrase + Türkçe-büyük-harf (slot-AND split bu alanlarda 0 döner).
+        slots = {
+            "keyword": tr_upper(query), "keyword1": "", "keyword2": "",
+            "ops_field": op, "ops_field1": op,
+        }
+    else:
+        # Konu/başlık: çok-kelimeyi boolean slotlara böl (gerçek AND).
+        slots = _build_keyword_slots(query, op)
+
+    data = {**slots, "nevi": nevi, "tip": tip, "islem": "4"}
 
     resp = await post_form("SearchTez", data)
     html = resp.text
     return parse_results(html)
+
+
+# ---------------------------------------------------------------------------
+# islem=2 — gelişmiş/filtreli arama (üniversite/tür/yıl/dil/izin + metin filtreleri)
+# ---------------------------------------------------------------------------
+
+
+def _build_advanced_body(
+    *,
+    university_kod: str = "",
+    university_yoksis: str = "",
+    university_name: str = "",
+    tur: str = "0",
+    year_from: str = "0",
+    year_to: str = "0",
+    dil: str = "0",
+    izin: str = "0",
+    durum: str = "3",
+    title: str = "",
+    author: str = "",
+    advisor: str = "",
+    subject: str = "",
+) -> dict:
+    """islem=2 (gelişmiş/filtreli arama) POST gövdesini kurar.
+
+    Canlı probe ile doğrulandı (FINDINGS §2 addendum): boş facet kodları ``"0"``,
+    boş metin alanları ``""`` gönderilmeli — aksi halde "Geçersiz sorgulama" /
+    "Hata Oluştu". Üniversite kapsamı için şifreli ``Universite`` kod + ``uni_yoksis_id``
+    birlikte gönderilir. ``Durum="3"`` (onaylandı), ``source="TR"``, submit ``-find``.
+    """
+    return {
+        "uniad": university_name,
+        "Universite": university_kod,
+        "uni_yoksis_id": university_yoksis,
+        "source": "TR",
+        "ensad": "", "Enstitu": "0",
+        "abdad": "", "ABD": "0",
+        "Konu": subject,
+        "Tur": tur, "yil1": year_from, "yil2": year_to,
+        "izin": izin, "Durum": durum, "Dil": dil,
+        "TezAd": title, "AdSoyad": author, "DanismanAdSoyad": advisor,
+        "Dizin": "", "TezNo": "", "Metin": "", "Bolum": "0",
+        "islem": "2", "-find": "  Bul",
+    }
+
+
+async def search_advanced(
+    *,
+    university_kod: str = "",
+    university_yoksis: str = "",
+    university_name: str = "",
+    tur: str = "0",
+    year_from: str = "0",
+    year_to: str = "0",
+    dil: str = "0",
+    izin: str = "0",
+    durum: str = "3",
+    title: str = "",
+    author: str = "",
+    advisor: str = "",
+    subject: str = "",
+) -> SearchResult:
+    """YÖKTEZ islem=2 gelişmiş/filtreli arama yapar (sunucu-taraflı filtreleme).
+
+    Üniversite/tür/yıl/dil/izin facet'leri + başlık/yazar/danışman/konu metin
+    filtrelerini sunucuya iletir. Sonuç sayfası islem=4 ile aynı yapıda olduğundan
+    ``parse_results`` ile parse edilir. ``SearchError`` → "Geçersiz sorgulama".
+    """
+    body = _build_advanced_body(
+        university_kod=university_kod,
+        university_yoksis=university_yoksis,
+        university_name=university_name,
+        tur=tur, year_from=year_from, year_to=year_to,
+        dil=dil, izin=izin, durum=durum,
+        title=title, author=author, advisor=advisor, subject=subject,
+    )
+    resp = await post_form("SearchTez", body)
+    return parse_results(resp.text)

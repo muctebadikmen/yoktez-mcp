@@ -27,7 +27,7 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from . import citations, detail, facets, index, pdf, prompts, search
+from . import citations, detail, facets, index, pdf, prompts, relevance, search
 from .models import AccessStatus, Thesis
 from .text import tr_fold
 
@@ -174,6 +174,134 @@ def _dedupe_hits(hits: list) -> list:
     return out
 
 
+def _warm_index(hits: list) -> None:
+    """Canlı sonuçları yerel indekse en-iyi-çaba ile yazar (on-demand warming).
+
+    Aramaya ASLA hata fırlatmaz — indeks ısınması bir yan etkidir, asıl yanıtı
+    bloke etmez. Böylece indeks, MCP kullanıldıkça canlı sonuçlardan ısınır.
+    """
+    if not hits:
+        return
+    try:
+        index.get_default_index().upsert_hits(hits)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _tur_code(label: str | None) -> str:
+    """Tez türü etiketini ('Doktora') islem=2 Tur koduna ('2') çevirir; bilinmezse '0'."""
+    if not label:
+        return "0"
+    lf = tr_fold(label)
+    for code, name in facets.ENUMS["Tur"].items():
+        if tr_fold(name) == lf:
+            return str(code)
+    for code, name in facets.ENUMS["Tur"].items():
+        if lf in tr_fold(name):
+            return str(code)
+    return "0"
+
+
+async def _university_listing(
+    university: str,
+    *,
+    thesis_type: str | None = None,
+    year_from: int | None = None,
+    year_to: int | None = None,
+    limit: int = 50,
+) -> dict:
+    """Üniversite tez listesi — canlı islem=2 (facet kod+yoksis) + yerel indeks.
+
+    Hem ``list_university_theses`` aracı hem de ``yoktez://university/{name}``
+    resource'u buraya delege eder. Facet'te bulunamayan üniversite için canlıya
+    ÇIKILMAZ (kod/yoksis gerekir); yalnızca indeks kullanılır ve dürüstçe bildirilir.
+    """
+    idx = index.get_default_index()
+    idx_result = idx.by_university(
+        university, thesis_type=thesis_type, year_from=year_from,
+        year_to=year_to, limit=limit,
+    )
+
+    notes: list[str] = []
+    live_hits: list = []
+    live_total: int | None = None
+    live_complete = True
+    live_error: str | None = None
+
+    unis = facets.find_university(university)
+    if not unis:
+        notes.append(
+            "Üniversite, facet sözlüğünde bulunamadı; canlı (islem=2) kapsama için "
+            "şifreli kod gerektiğinden yalnızca yerel indeks kullanıldı. "
+            "Adı tam/farklı yazmayı deneyin (örn. 'Boğaziçi Üniversitesi')."
+        )
+    else:
+        u = unis[0]
+        if len(unis) > 1:
+            notes.append(
+                f"'{university}' için {len(unis)} üniversite eşleşti; ilki "
+                f"({u['name']}) kullanıldı. Daha belirgin bir ad verin."
+            )
+        try:
+            live_result = await search.search_advanced(
+                university_kod=u["kod"], university_yoksis=u["yoksis_id"],
+                university_name=u["name"], tur=_tur_code(thesis_type),
+                year_from=str(year_from) if year_from else "0",
+                year_to=str(year_to) if year_to else "0",
+            )
+            live_hits = live_result.hits
+            live_total = live_result.total_found
+            live_complete = live_result.coverage_complete
+        except Exception as exc:  # noqa: BLE001
+            live_error = f"{type(exc).__name__}: {exc}"
+
+    # Filtreleme TAMAMEN sunucu/indeks tarafında: canlı islem=2 tur/yıl ile
+    # kapsamlanmış, indeks by_university tür/yıl filtresini uygulamıştır. Burada
+    # client-filtre UYGULANMAZ — büyük sayfalarda kart meta'sı (thesis_type/year)
+    # None gelebildiğinden client-filtre geçerli sonuçları yanlışlıkla eler.
+    _warm_index(live_hits)
+    all_hits = _dedupe_hits(live_hits + list(idx_result.hits))
+    # Tür istendi ama bilinen Tur koduna eşlenemediyse canlı taraf tür-filtreli değildir.
+    if thesis_type and unis and _tur_code(thesis_type) == "0":
+        notes.append(
+            f"thesis_type={thesis_type!r} bilinen bir Tür koduna eşlenemedi; "
+            "canlı sonuçlar tür-filtreli olmayabilir."
+        )
+    page = all_hits[:limit]
+
+    live_has = bool(live_hits)
+    index_has = bool(idx_result.hits)
+    if live_has and index_has:
+        source = "hybrid"
+    elif live_has:
+        source = "live"
+    else:
+        source = "index"
+
+    if live_error:
+        notes.append(
+            f"Canlı üniversite araması (islem=2) başarısız oldu: {live_error}. "
+            "Yalnızca yerel indeks kullanıldı."
+        )
+    if not live_complete:
+        notes.append(
+            f"YÖKTEZ canlı sonuçları 2000-cap ile sınırlı ({live_total} toplam). "
+            "Yıl veya tür ile daraltın."
+        )
+    if not page:
+        notes.append("Bu üniversite için tez bulunamadı (canlı + indeks).")
+
+    return {
+        "university_query": university,
+        "source": source,
+        "total_found": live_total,
+        "count": len(page),
+        "results": [_hit_to_dict(h) for h in page],
+        "notes": notes,
+        "source_notice": SOURCE_NOTICE,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Araçlar
 # ---------------------------------------------------------------------------
@@ -253,13 +381,29 @@ async def search_theses(
     except Exception as exc:
         live_error = f"Canlı arama hatası: {type(exc).__name__}"
 
-    # 3. Birleştir + tekilleştir (index önce, live sonra → index öncelikli)
-    all_hits = list(index_result.hits)
-    if live_result:
-        all_hits = all_hits + live_result.hits
-    all_hits = _dedupe_hits(all_hits)
+    # 3. Canlı sonuçları sorgu-alaka düzeyine göre süz/sırala (gürültü ayıkla).
+    #    Geniş alanlarda ("all"/"abstract") sunucu, özet/dizin alanındaki rastgele
+    #    eşleşmeleri de döndürür → başlık/yazar/danışmanda hiç sorgu terimi geçmeyen
+    #    sonuçlar elenir. Alan-bazlı aramalarda (title/author/...) yalnızca yeniden
+    #    sıralanır (recall korunur). İndeks sonuçları zaten FTS-eşleşmeli; süzülmez.
+    live_raw = list(live_result.hits) if live_result else []
+    drop_noise = field in ("all", "abstract")
+    live_hits = (
+        relevance.relevance_filter_sort(
+            live_raw, query, require_all_terms=False, min_terms=1 if drop_noise else 0
+        )
+        if live_raw
+        else []
+    )
+    dropped_noise = len(live_raw) - len(live_hits)
 
-    # 4. Client-side filtreler (indeks SearchResult zaten filtreli, canlı sonuç için uygula)
+    # On-demand warming: alaka-süzülmüş canlı sonuçları indekse yaz (en-iyi-çaba).
+    _warm_index(live_hits)
+
+    # 4. Birleştir + tekilleştir (index önce, alaka-sıralı canlı sonra)
+    all_hits = _dedupe_hits(list(index_result.hits) + live_hits)
+
+    # 5. Client-side filtreler (indeks SearchResult zaten filtreli, canlı sonuç için uygula)
     filtered_hits, filters_used = _apply_client_filters(
         all_hits,
         thesis_type=thesis_type,
@@ -278,8 +422,8 @@ async def search_theses(
     # Limit uygula
     page = filtered_hits[:limit]
 
-    # 5. Kaynak bildir — yalnızca gerçekten katkıda bulunan kaynaklar sayılır
-    live_has = bool(live_result and live_result.hits)
+    # 6. Kaynak bildir — yalnızca GÖSTERİLEN sonuçlara katkı veren backend'ler
+    live_has = bool(live_hits)
     index_has = bool(index_result and index_result.hits)
     if live_has and index_has:
         source = "hybrid"
@@ -308,11 +452,18 @@ async def search_theses(
             f"YÖKTEZ canlı sonuçları 2000-cap ile sınırlı: {live_shown}/{live_total} gösteriliyor "
             "(coverage_complete=false). Filtreler yalnızca bu 2000 sonuç üzerinde uygulandı."
         )
+    if dropped_noise > 0:
+        notes.append(
+            f"Canlı sonuçlar sorgu-alaka düzeyine göre yeniden sıralandı; başlık/yazar/"
+            f"danışmanda hiç sorgu terimi geçmeyen {dropped_noise} sonuç (özet-yalnızca "
+            "eşleşme) elendi."
+        )
     # Filtre notu yalnızca canlı hit mevcutsa eklenir; indeks zaten sunucu tarafında filtrelenmiştir.
     if filters_used and live_has:
         notes.append(
-            "Filtreler (tür/yıl/üniversite) canlı dönen set üzerinde client-side uygulandı "
-            "— islem=2 (sunucu filtreli arama) şu an kullanılamıyor."
+            "Filtreler (tür/yıl/üniversite) bu araçta canlı dönen set üzerinde client-side "
+            "uygulanır. Sunucu-taraflı (islem=2) üniversite kapsamı için "
+            "list_university_theses kullanın."
         )
     if department:
         notes.append(
@@ -478,20 +629,24 @@ async def find_advisor_theses(advisor: str, limit: int = 20) -> dict:
     # Canlı YÖKTEZ (danışman alanında arama)
     live_hits: list = []
     live_error: str | None = None
-    live_total = 0
+    live_total: int | None = None
     live_complete = True
     try:
-        live_result = await search.search_keyword(advisor, field="advisor", match="contains")
+        # Canlı arama 'Ad Soyad' biçimi ister (probe: 'Soyad, Ad' → 0 sonuç).
+        live_result = await search.search_keyword(
+            search.normalize_person_name(advisor), field="advisor", match="contains"
+        )
         live_hits = live_result.hits
         live_total = live_result.total_found
         live_complete = live_result.coverage_complete
     except Exception as exc:
         live_error = f"{type(exc).__name__}: {exc}"
 
-    # Yerel indeks
+    # Yerel indeks (ham scrape'lenmiş adla; indeks kendi normalizasyonunu yapar)
     idx = index.get_default_index()
     idx_result = idx.by_advisor(advisor, limit=limit * 2)
 
+    _warm_index(live_hits)
     all_hits = _dedupe_hits(idx_result.hits + live_hits)
     page = all_hits[:limit]
 
@@ -532,10 +687,12 @@ async def find_author_theses(author: str, limit: int = 20) -> dict:
 
     live_hits: list = []
     live_error: str | None = None
-    live_total = 0
+    live_total: int | None = None
     live_complete = True
     try:
-        live_result = await search.search_keyword(author, field="author", match="contains")
+        live_result = await search.search_keyword(
+            search.normalize_person_name(author), field="author", match="contains"
+        )
         live_hits = live_result.hits
         live_total = live_result.total_found
         live_complete = live_result.coverage_complete
@@ -545,6 +702,7 @@ async def find_author_theses(author: str, limit: int = 20) -> dict:
     idx = index.get_default_index()
     idx_result = idx.by_author(author, limit=limit * 2)
 
+    _warm_index(live_hits)
     all_hits = _dedupe_hits(idx_result.hits + live_hits)
     page = all_hits[:limit]
 
@@ -580,10 +738,11 @@ async def list_university_theses(
     year_to: int | None = None,
     limit: int = 50,
 ) -> dict:
-    """Bir üniversitenin tezlerini listele — yalnızca yerel indeks.
+    """Bir üniversitenin tezlerini listele — canlı islem=2 + yerel indeks (hibrit).
 
-    ⚠️  Üniversite bazlı canlı arama (islem=2) şu an KULLANILAMIYOR (sunucu hatası).
-    Yalnızca yerel FTS5 indeksindeki tezler döndürülür. İndeks boşsa dürüstçe bildirilir.
+    Üniversite adı facet sözlüğünde bulunursa şifreli kod ile sunucu-taraflı
+    (islem=2) kapsama yapılır; ayrıca yerel indeks sonuçlarıyla birleştirilir.
+    Facet'te bulunamayan üniversite için yalnızca indeks kullanılır (dürüstçe bildirilir).
 
     Args:
         university: Üniversite adı (Türkçe-duyarlı, kısmi eşleşme).
@@ -595,37 +754,10 @@ async def list_university_theses(
     if not university or not university.strip():
         raise ToolError("university adı boş olamaz.")
 
-    idx = index.get_default_index()
-    result = idx.by_university(
-        university,
-        thesis_type=thesis_type,
-        year_from=year_from,
-        year_to=year_to,
-        limit=limit,
+    return await _university_listing(
+        university, thesis_type=thesis_type,
+        year_from=year_from, year_to=year_to, limit=limit,
     )
-
-    notes: list[str] = [
-        "Canlı üniversite bazlı arama (islem=2) şu an kullanılamıyor (sunucu hatası). "
-        "Yalnızca yerel indeks kullanıldı."
-    ]
-
-    if result.total_found == 0:
-        notes.append(
-            "İndekste bu üniversite için tez bulunamadı. "
-            "Olası nedenler: (1) seed indeksi henüz derlenmedi — "
-            "'Live university-scoped search requires advanced search (currently unavailable); "
-            "seed index not yet built.' (2) Üniversite adı farklı yazılmış olabilir."
-        )
-
-    return {
-        "university_query": university,
-        "source": "index",
-        "total_found": result.total_found,
-        "count": len(result.hits),
-        "results": [_hit_to_dict(h) for h in result.hits],
-        "notes": notes,
-        "source_notice": SOURCE_NOTICE,
-    }
 
 
 @mcp.tool(annotations=READONLY)
@@ -648,23 +780,78 @@ async def related_theses(kayit_no: str, tez_no: str, limit: int = 10) -> dict:
     idx = index.get_default_index()
     result = idx.related(thesis, limit=limit)
 
+    # İndekste yeterli örtüşme varsa → indeks sonuçları (hızlı, BM25-sıralı).
+    if result.total_found > 0:
+        return {
+            "source_kayit_no": kayit_no,
+            "source_title": thesis.title_tr or thesis.title_en,
+            "source": "index",
+            "total_found": result.total_found,
+            "count": len(result.hits),
+            "results": [_hit_to_dict(h) for h in result.hits],
+            "notes": [
+                f"KAPSAM: benzerlik yerel indeksteki {result.total_found} tez "
+                "üzerinde hesaplandı."
+            ],
+            "source_notice": SOURCE_NOTICE,
+        }
+
+    # İndeks boş/ince → kaynak tezin konu/anahtar kelime/başlığından CANLI türet.
+    seed_raw = (
+        list(thesis.keywords_tr or [])
+        + list(thesis.keywords_en or [])
+        + list(thesis.subjects or [])
+        + ([thesis.title_tr] if thesis.title_tr else [])
+    )
+    seed_terms: list[str] = []
+    for raw in seed_raw:
+        seed_terms.extend(index._query_terms(raw))
+    seed_terms = list(dict.fromkeys(seed_terms))[:6]  # dedup + makul üst sınır
+    query = " ".join(seed_terms)
+
     notes: list[str] = []
-    if result.total_found == 0:
+    live_hits: list = []
+    live_error: str | None = None
+    if query:
+        try:
+            # OR ile geniş aday havuzu → alaka filtresiyle daralt (recall + precision).
+            live_result = await search.search_keyword(query, field="all", match="contains", op="or")
+            live_hits = relevance.relevance_filter_sort(
+                live_result.hits, query, require_all_terms=False, min_terms=1
+            )
+        except Exception as exc:  # noqa: BLE001
+            live_error = f"{type(exc).__name__}: {exc}"
+
+    # Kaynak tezin kendisini hariç tut.
+    live_hits = [h for h in live_hits if h.kayit_no != kayit_no]
+    _warm_index(live_hits)
+    page = live_hits[:limit]
+
+    if not query:
         notes.append(
-            "İlgili tez bulunamadı — indeks boş veya yeterli konu örtüşmesi yok."
+            "Benzer tez türetilemedi — kaynak tezde konu/anahtar kelime/başlık bilgisi yok."
+        )
+    elif live_error:
+        notes.append(
+            f"İndeks boş; kaynak tezin konularından canlı benzerlik araması başarısız: {live_error}."
+        )
+    elif not page:
+        notes.append(
+            "İlgili tez bulunamadı (yerel indeks boş; canlı arama da sonuç vermedi)."
         )
     else:
         notes.append(
-            f"KAPSAM: benzerlik yalnızca yerel indeksteki {result.total_found} tez üzerinde hesaplandı."
+            f"İndeks boş olduğundan benzerlik, kaynak tezin konularından "
+            f"('{query}') CANLI YÖKTEZ üzerinden türetildi."
         )
 
     return {
         "source_kayit_no": kayit_no,
         "source_title": thesis.title_tr or thesis.title_en,
-        "source": "index",
-        "total_found": result.total_found,
-        "count": len(result.hits),
-        "results": [_hit_to_dict(h) for h in result.hits],
+        "source": "live" if page else "index",
+        "total_found": None,
+        "count": len(page),
+        "results": [_hit_to_dict(h) for h in page],
         "notes": notes,
         "source_notice": SOURCE_NOTICE,
     }
@@ -835,10 +1022,12 @@ async def _resolve_advisor(name: str, limit: int = 20) -> dict:
     """find_advisor_theses aracıyla aynı mantık — araç ve resource paylaşır."""
     live_hits: list = []
     live_error: str | None = None
-    live_total = 0
+    live_total: int | None = None
     live_complete = True
     try:
-        live_result = await search.search_keyword(name, field="advisor", match="contains")
+        live_result = await search.search_keyword(
+            search.normalize_person_name(name), field="advisor", match="contains"
+        )
         live_hits = live_result.hits
         live_total = live_result.total_found
         live_complete = live_result.coverage_complete
@@ -848,6 +1037,7 @@ async def _resolve_advisor(name: str, limit: int = 20) -> dict:
     idx = index.get_default_index()
     idx_result = idx.by_advisor(name, limit=limit * 2)
 
+    _warm_index(live_hits)
     all_hits = _dedupe_hits(idx_result.hits + live_hits)
     page = all_hits[:limit]
 
@@ -876,29 +1066,7 @@ async def _resolve_advisor(name: str, limit: int = 20) -> dict:
 
 async def _resolve_university(name: str, limit: int = 50) -> dict:
     """list_university_theses aracıyla aynı mantık — araç ve resource paylaşır."""
-    idx = index.get_default_index()
-    result = idx.by_university(name, limit=limit)
-
-    notes: list[str] = [
-        "Canlı üniversite bazlı arama (islem=2) şu an kullanılamıyor (sunucu hatası). "
-        "Yalnızca yerel indeks kullanıldı."
-    ]
-    if result.total_found == 0:
-        notes.append(
-            "İndekste bu üniversite için tez bulunamadı. "
-            "Olası nedenler: (1) seed indeksi henüz derlenmedi, "
-            "(2) üniversite adı farklı yazılmış olabilir."
-        )
-
-    return {
-        "university_query": name,
-        "source": "index",
-        "total_found": result.total_found,
-        "count": len(result.hits),
-        "results": [_hit_to_dict(h) for h in result.hits],
-        "notes": notes,
-        "source_notice": SOURCE_NOTICE,
-    }
+    return await _university_listing(name, limit=limit)
 
 
 @mcp.resource(

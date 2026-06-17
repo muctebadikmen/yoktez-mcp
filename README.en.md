@@ -168,8 +168,9 @@ A thesis is accessed via these **two keys**. They are **opaque/encrypted** keys 
 
 Honesty is the backbone of this project. The real limitations of the current version:
 
-- **Advanced-filter *live* search not yet available (`islem=2`).** YÖK's advanced search form (type/year/university/department filters) is closed to programmatic POST requests server-side (requires browser-specific JS; a plain request returns "Hata Oluştu"). Currently these filters are applied **on the local index + live keyword results**. *(Roadmap: to be resolved by capturing the real browser POST.)*
-- **Warm cross-thesis index not yet harvested.** The seed index bundled with the package is currently an **empty placeholder**; search therefore runs on **live keyword** queries and is subject to YÖK's **2,000-results/query** cap (coverage is reported honestly). *(Roadmap: polite harvest by type×year×department slicing → `data/seed_index.db.gz`.)*
+- **Full coverage only up to YÖK's 2,000-results/query cap.** If a live query hits the cap, `coverage_complete=false` is reported honestly and you should narrow by year/type. (The seed index exceeds this cap by slicing — see below.)
+- **The seed index is harvested for a curated scope (not all of YÖKTEZ).** The bundled `data/seed_index.db.gz` currently covers **6 major universities × PhD × 2018–2025** (~19k theses); anything outside that scope is queried **live** (and the index warms with use). Expand it by running `scripts/build_index.py --turler 1,2 --years 2010-2025` (polite, resumable).
+- **No advisor index — advisor discovery is live.** Search result cards carry no advisor, so the seed index's `advisor` field is empty; `find_advisor_theses` therefore runs **live via `nevi=3`** (the primary path for academic-lineage analysis).
 - **No OCR.** Scanned/broken-font PDFs cannot yield real extracted text; with no free, keyless, frictionless OCR path available, it is out of scope. These documents are marked **`text_reliable=false`**.
 - **No full text for restricted theses.** If the author has not granted publication permission, the PDF is inaccessible; content is not fabricated — YÖK's reason text is returned instead. (Print copies can be obtained through university libraries via TÜBESS.)
 
@@ -212,7 +213,7 @@ search.py     detail.py      pdf.py          index.py      facets.py   citations
    └───────────────┴────────  cache.py (memory+disk) · http.py (session, throttle, 429 backoff) · text.py (tr_fold)
 ```
 
-Hybrid architecture: **live `SearchTez`** scraping + **local FTS5 index**. A bundled, gzipped seed index (`data/seed_index.db.gz`) is loaded at startup; once harvesting is complete, it will make cross-thesis search **warm** from the first query (currently an empty placeholder — see Honest limitations).
+Hybrid architecture: **live `SearchTez`** scraping (keyword `islem=4` + filtered `islem=2`) + **local FTS5 index**. A bundled, gzipped seed index (`data/seed_index.db.gz`, ~19k theses) is loaded at startup to make cross-thesis search **warm** from the first query; results from every live query are also written back into the index (on-demand warming), so coverage grows with use.
 
 ---
 

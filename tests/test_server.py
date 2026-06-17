@@ -177,6 +177,9 @@ class _EmptyIndex:
             coverage_complete=True, source="index", notes=[]
         )
 
+    def upsert_hits(self, hits):
+        return len(hits)
+
 
 class _IndexWithHits:
     """Sabit hit listesi döndüren mock."""
@@ -223,6 +226,9 @@ class _IndexWithHits:
             shown=len(self._hits),
             coverage_complete=True, source="index", notes=[]
         )
+
+    def upsert_hits(self, hits):
+        return len(hits)
 
 
 # ---------------------------------------------------------------------------
@@ -337,8 +343,61 @@ async def test_search_theses_source_hybrid(monkeypatch):
                         lambda: _IndexWithHits([_HIT_1]))
 
     srv = _import_server()
-    result = await srv.search_theses("zeka")
+    # 'makine' canlı hit (_HIT_2 'Makine Öğrenmesi') başlığında geçer → alaka filtresinden geçer.
+    result = await srv.search_theses("makine")
     assert result["source"] == "hybrid"
+
+
+@pytest.mark.asyncio
+async def test_search_theses_warms_index_with_live_hits(monkeypatch):
+    """Canlı sonuçlar yerel indekse on-demand olarak yazılmalı (upsert_hits)."""
+
+    class RecordingIndex(_EmptyIndex):
+        def __init__(self):
+            self.warmed = []
+
+        def upsert_hits(self, hits):
+            self.warmed.extend(hits)
+            return len(hits)
+
+    rec = RecordingIndex()
+    monkeypatch.setattr(_index_mod, "get_default_index", lambda: rec)
+    monkeypatch.setattr(_search_mod, "search_keyword",
+                        lambda *a, **kw: _async_return(SearchResult(
+                            hits=[_HIT_1], total_found=1, shown=1,
+                            coverage_complete=True, source="live", notes=[]
+                        )))
+
+    srv = _import_server()
+    await srv.search_theses("yapay zeka")
+    assert any(getattr(h, "kayit_no", None) == "111" for h in rec.warmed)
+
+
+@pytest.mark.asyncio
+async def test_search_theses_relevance_drops_zero_coverage(monkeypatch):
+    """Canlı sonuçlarda başlık/yazarda hiç sorgu terimi yoksa (gürültü) elenir."""
+    off_topic = SearchHit(
+        kayit_no="z", tez_no="t", thesis_no=None,
+        title_tr="Din eğitimi açısından anlatı", title_en=None, author="X Y",
+        year=2023, university="MARMARA", thesis_type="Doktora",
+    )
+    on_topic = SearchHit(
+        kayit_no="a", tez_no="t", thesis_no=None,
+        title_tr="Yapay zeka ve hukuk", title_en=None, author="A B",
+        year=2022, university="İSTANBUL", thesis_type="Yüksek Lisans",
+    )
+    monkeypatch.setattr(_search_mod, "search_keyword",
+                        lambda *a, **kw: _async_return(SearchResult(
+                            hits=[off_topic, on_topic], total_found=2, shown=2,
+                            coverage_complete=True, source="live", notes=[]
+                        )))
+    monkeypatch.setattr(_index_mod, "get_default_index", lambda: _EmptyIndex())
+
+    srv = _import_server()
+    result = await srv.search_theses("yapay zeka hukuk")
+    kayits = [r["kayit_no"] for r in result["results"]]
+    assert "a" in kayits
+    assert "z" not in kayits  # sıfır-kapsam gürültü elenir
 
 
 @pytest.mark.asyncio
@@ -556,33 +615,74 @@ async def test_fulltext_open_sections_present(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_list_university_theses_empty_index_honest_note(monkeypatch):
-    """Boş indeks → honest not (seed not yet built / unavailable)."""
+async def test_list_university_uses_live_islem2(monkeypatch):
+    """Üniversite facet'te bulunursa islem=2 canlı yol kullanılır; eski not kalkar."""
+    monkeypatch.setattr(_facets_mod, "find_university",
+        lambda q: [{"kod": "ENC", "name": "X ÜNİVERSİTESİ", "yoksis_id": "YID"}])
+    captured: dict = {}
+
+    async def fake_adv(**kw):
+        captured.update(kw)
+        return SearchResult(hits=[_HIT_1], total_found=1, shown=1,
+                            coverage_complete=True, source="live", notes=[])
+
+    monkeypatch.setattr(_search_mod, "search_advanced", fake_adv)
     monkeypatch.setattr(_index_mod, "get_default_index", lambda: _EmptyIndex())
 
     srv = _import_server()
-    result = await srv.list_university_theses("İstanbul Üniversitesi")
+    out = await srv.list_university_theses("X Üniversitesi", thesis_type="Doktora")
 
-    assert result["total_found"] == 0
-    assert result["count"] == 0
-    # islem=2 unavailable notu var mı?
-    notes_text = " ".join(result["notes"])
-    assert "islem=2" in notes_text or "kullanılamıyor" in notes_text or "unavailable" in notes_text
-    # seed not built / empty mesajı
-    assert "seed" in notes_text or "indeks" in notes_text or "bulunamadı" in notes_text
+    assert out["count"] == 1
+    assert out["source"] in ("live", "hybrid")
+    assert captured["university_kod"] == "ENC"
+    assert captured["university_yoksis"] == "YID"
+    assert captured["tur"] == "2"  # Doktora → 2
+    # Artık geçerli olmayan "islem=2 kullanılamıyor" notu OLMAMALI.
+    assert not any("kullanılamıyor" in n for n in out["notes"])
 
 
 @pytest.mark.asyncio
-async def test_list_university_theses_always_adds_islem2_note(monkeypatch):
-    """İndeks doluyken bile islem=2 notu eklenmeli."""
+async def test_list_university_facet_not_found_falls_back_to_index(monkeypatch):
+    """Facet'te yoksa canlıya çıkılmaz: yalnızca indeks + dürüst not."""
+    monkeypatch.setattr(_facets_mod, "find_university", lambda q: [])
+    called = {"adv": False}
+
+    async def fake_adv(**kw):
+        called["adv"] = True
+        return SearchResult(hits=[], total_found=0, shown=0,
+                            coverage_complete=True, source="live", notes=[])
+
+    monkeypatch.setattr(_search_mod, "search_advanced", fake_adv)
+    monkeypatch.setattr(_index_mod, "get_default_index", lambda: _EmptyIndex())
+
+    srv = _import_server()
+    out = await srv.list_university_theses("Bilinmeyen Üniversite")
+
+    assert called["adv"] is False  # facet yoksa canlıya çıkma
+    assert out["source"] == "index"
+    notes_text = " ".join(out["notes"]).lower()
+    assert "facet" in notes_text or "bulunamadı" in notes_text
+
+
+@pytest.mark.asyncio
+async def test_list_university_live_error_falls_back_to_index(monkeypatch):
+    """islem=2 hata verirse indekse düş + dürüst hata notu."""
+    monkeypatch.setattr(_facets_mod, "find_university",
+        lambda q: [{"kod": "ENC", "name": "X ÜNİVERSİTESİ", "yoksis_id": "YID"}])
+
+    async def fake_adv(**kw):
+        raise _search_mod.SearchError("Geçersiz sorgulama")
+
+    monkeypatch.setattr(_search_mod, "search_advanced", fake_adv)
     monkeypatch.setattr(_index_mod, "get_default_index",
                         lambda: _IndexWithHits([_HIT_1]))
 
     srv = _import_server()
-    result = await srv.list_university_theses("İstanbul Üniversitesi")
+    out = await srv.list_university_theses("X Üniversitesi")
 
-    notes_text = " ".join(result["notes"])
-    assert "islem=2" in notes_text or "kullanılamıyor" in notes_text
+    assert out["source"] == "index"
+    notes_text = " ".join(out["notes"]).lower()
+    assert "başarısız" in notes_text or "hata" in notes_text
 
 
 # ---------------------------------------------------------------------------
@@ -782,7 +882,8 @@ async def test_filters_caveat_present_when_live_hits_filtered(monkeypatch):
     monkeypatch.setattr(_index_mod, "get_default_index", lambda: _EmptyIndex())
 
     srv = _import_server()
-    result = await srv.search_theses("zeka", year_from=2018)
+    # 'makine' canlı hit (_HIT_2 'Makine Öğrenmesi') başlığında geçer → alaka filtresinden geçer.
+    result = await srv.search_theses("makine", year_from=2018)
 
     caveat_notes = [n for n in result["notes"] if "client-side" in n or "islem=2" in n]
     assert caveat_notes, "Filtre-caveat notu eksik (live hit + filtre kombinasyonunda olmalı)"
@@ -906,12 +1007,138 @@ async def test_advisor_resource_returns_source_notice(monkeypatch):
 async def test_university_resource_returns_index_note(monkeypatch):
     """yoktez://university/{name} → list_university_theses mantığını kullanır."""
     monkeypatch.setattr(_index_mod, "get_default_index", lambda: _EmptyIndex())
+    # Facet'i boş döndür → offline kalsın (canlı islem=2'ye çıkılmaz).
+    monkeypatch.setattr(_facets_mod, "find_university", lambda q: [])
 
     import yoktez_mcp.server as srv
 
     result = await srv.mcp.read_resource("yoktez://university/%C4%B0stanbul")
     content_str = str(result)
     assert "source_notice" in content_str or "index" in content_str or "YÖKTEZ" in content_str
+
+
+# ---------------------------------------------------------------------------
+# related_theses — indeks boş/ince ise canlı fallback
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_related_theses_live_fallback_when_index_empty(monkeypatch):
+    """İndeks boşsa kaynak tezin konu/anahtar kelimelerinden canlı benzer tez türetir."""
+    monkeypatch.setattr(_detail_mod, "get_thesis",
+                        lambda *a, **kw: _async_return(_OPEN_THESIS))
+    monkeypatch.setattr(_index_mod, "get_default_index", lambda: _EmptyIndex())
+
+    related_hits = [
+        SearchHit(kayit_no="111", tez_no="t111", title_tr="Yapay Zeka ve Eğitim"),  # kaynak
+        SearchHit(kayit_no="888", tez_no="t888", title_tr="Yapay zeka uygulamaları", year=2021),
+        SearchHit(kayit_no="999", tez_no="t999", title_tr="Eğitimde yapay zeka", year=2020),
+    ]
+
+    async def fake_keyword(query, **kw):
+        return SearchResult(hits=related_hits, total_found=3, shown=3,
+                            coverage_complete=True, source="live", notes=[])
+
+    monkeypatch.setattr(_search_mod, "search_keyword", fake_keyword)
+
+    srv = _import_server()
+    out = await srv.related_theses("111", "t111")
+
+    kayits = [r["kayit_no"] for r in out["results"]]
+    assert "111" not in kayits  # kaynak tez hariç tutulur
+    assert out["count"] > 0
+    assert out["source"] in ("live", "hybrid")
+
+
+@pytest.mark.asyncio
+async def test_related_theses_prefers_index_when_available(monkeypatch):
+    """İndekste benzer tez varsa canlıya çıkılmaz (source=index)."""
+    monkeypatch.setattr(_detail_mod, "get_thesis",
+                        lambda *a, **kw: _async_return(_OPEN_THESIS))
+    monkeypatch.setattr(_index_mod, "get_default_index",
+                        lambda: _IndexWithHits([_HIT_2]))
+    called = {"live": False}
+
+    async def fake_keyword(query, **kw):
+        called["live"] = True
+        return SearchResult(hits=[], total_found=0, shown=0,
+                            coverage_complete=True, source="live", notes=[])
+
+    monkeypatch.setattr(_search_mod, "search_keyword", fake_keyword)
+
+    srv = _import_server()
+    out = await srv.related_theses("111", "t111")
+    assert out["source"] == "index"
+    assert called["live"] is False  # indeks doluysa canlıya gerek yok
+
+
+# ---------------------------------------------------------------------------
+# Advisor/author isim normalizasyonu — canlı çağrıya 'Ad Soyad' geçilmeli
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_find_advisor_normalizes_surname_first(monkeypatch):
+    """find_advisor_theses canlı çağrıya 'Ad Soyad' biçimini geçirmeli."""
+    captured: dict = {}
+
+    async def fake_keyword(query, **kw):
+        captured["query"] = query
+        captured["field"] = kw.get("field")
+        return SearchResult(hits=[], total_found=0, shown=0,
+                            coverage_complete=True, source="live", notes=[])
+
+    monkeypatch.setattr(_search_mod, "search_keyword", fake_keyword)
+    monkeypatch.setattr(_index_mod, "get_default_index", lambda: _EmptyIndex())
+    srv = _import_server()
+    await srv.find_advisor_theses("Bozkurt, Veysel")
+    assert captured["query"] == "Veysel Bozkurt"
+    assert captured["field"] == "advisor"
+
+
+@pytest.mark.asyncio
+async def test_find_advisor_total_found_none_when_live_fails(monkeypatch):
+    """Canlı katkı yoksa total_found 0 DEĞİL None olmalı (search_theses ile tutarlı)."""
+    async def _raise(*a, **kw):
+        raise _search_mod.SearchError("boom")
+
+    monkeypatch.setattr(_search_mod, "search_keyword", _raise)
+    monkeypatch.setattr(_index_mod, "get_default_index",
+                        lambda: _IndexWithHits([_HIT_1]))
+    srv = _import_server()
+    out = await srv.find_advisor_theses("Veysel Bozkurt")
+    assert out["total_found"] is None
+    assert out["count"] >= 1  # indeksten geldi
+
+
+@pytest.mark.asyncio
+async def test_find_author_total_found_none_when_live_fails(monkeypatch):
+    async def _raise(*a, **kw):
+        raise _search_mod.SearchError("boom")
+
+    monkeypatch.setattr(_search_mod, "search_keyword", _raise)
+    monkeypatch.setattr(_index_mod, "get_default_index",
+                        lambda: _IndexWithHits([_HIT_1]))
+    srv = _import_server()
+    out = await srv.find_author_theses("Zeynep Kılıç")
+    assert out["total_found"] is None
+
+
+@pytest.mark.asyncio
+async def test_find_author_strips_title(monkeypatch):
+    """find_author_theses canlı çağrıya ünvansız adı geçirmeli."""
+    captured: dict = {}
+
+    async def fake_keyword(query, **kw):
+        captured["query"] = query
+        return SearchResult(hits=[], total_found=0, shown=0,
+                            coverage_complete=True, source="live", notes=[])
+
+    monkeypatch.setattr(_search_mod, "search_keyword", fake_keyword)
+    monkeypatch.setattr(_index_mod, "get_default_index", lambda: _EmptyIndex())
+    srv = _import_server()
+    await srv.find_author_theses("Prof. Dr. Zeynep Kılıç")
+    assert captured["query"] == "Zeynep Kılıç"
 
 
 # ---------------------------------------------------------------------------

@@ -192,7 +192,10 @@ class TestSearchKeywordPostShape:
         assert captured["nevi"] == "1"
         assert captured["tip"] == "2"
         assert captured["islem"] == "4"
-        assert captured["keyword"] == "yapay zeka"
+        # Çok-kelime artık boolean slotlara bölünür (gerçek AND).
+        assert captured["keyword"] == "yapay"
+        assert captured["keyword1"] == "zeka"
+        assert captured["ops_field"] == "and"
         # izin/Tur/yil must NOT be present
         assert "izin" not in captured
         assert "Tur" not in captured
@@ -215,6 +218,28 @@ class TestSearchKeywordPostShape:
 
         assert captured["nevi"] == "3"
         assert captured["tip"] == "1"
+
+    @pytest.mark.asyncio
+    async def test_advisor_uses_single_uppercase_phrase_not_split(self, monkeypatch):
+        """Kişi adı (advisor/author) BÖLÜNMEZ: tek-phrase + Türkçe-büyük-harf.
+
+        Probe: nevi=3/2 için slot-AND split → 0; tek-phrase tr_upper → eşleşir.
+        """
+        captured: dict = {}
+
+        async def fake_post_form(endpoint: str, data: dict):
+            captured.update(data)
+            class FakeResp:
+                text = _read(f"{FIXTURE_BASE}/derived/results_islem4.html")
+            return FakeResp()
+
+        monkeypatch.setattr("yoktez_mcp.search.post_form", fake_post_form)
+        await search_keyword("Aslı Deniz Helvacıoğlu", field="advisor")
+
+        assert captured["nevi"] == "3"
+        assert captured["keyword"] == "ASLI DENİZ HELVACIOĞLU"
+        assert captured["keyword1"] == ""  # BÖLÜNMEMELİ
+        assert captured["keyword2"] == ""
 
     @pytest.mark.asyncio
     async def test_post_data_all_field(self, monkeypatch):
@@ -248,6 +273,129 @@ class TestSearchKeywordPostShape:
 
 
 # ---------------------------------------------------------------------------
+# _build_keyword_slots — multi-word AND across YÖKTEZ boolean slots
+# ---------------------------------------------------------------------------
+
+
+class TestBuildKeywordSlots:
+    # Strateji: 2-slot HALF-SPLIT. Probe kanıtı: 3-slot AND çöküyor (0), 2-slot AND
+    # daha iyi recall veriyor ("yapay zeka"+"hukuk"→16, "yapay zeka"+"ceza hukuku"→2).
+    def test_three_terms_half_split(self):
+        from yoktez_mcp.search import _build_keyword_slots
+
+        slots = _build_keyword_slots("yapay zeka hukuk")
+        assert slots["keyword"] == "yapay zeka"
+        assert slots["keyword1"] == "hukuk"
+        assert slots["keyword2"] == ""
+        assert slots["ops_field"] == "and"
+
+    def test_single_term(self):
+        from yoktez_mcp.search import _build_keyword_slots
+
+        slots = _build_keyword_slots("yapay")
+        assert slots["keyword"] == "yapay"
+        assert slots["keyword1"] == ""
+        assert slots["keyword2"] == ""
+
+    def test_two_terms(self):
+        from yoktez_mcp.search import _build_keyword_slots
+
+        slots = _build_keyword_slots("yapay zeka")
+        assert slots["keyword"] == "yapay"
+        assert slots["keyword1"] == "zeka"
+        assert slots["keyword2"] == ""
+
+    def test_four_terms_half_split_preserves_phrases(self):
+        from yoktez_mcp.search import _build_keyword_slots
+
+        slots = _build_keyword_slots("yapay zeka ceza hukuku")
+        assert slots["keyword"] == "yapay zeka"
+        assert slots["keyword1"] == "ceza hukuku"
+        assert slots["keyword2"] == ""
+        assert slots["ops_field"] == "and"
+
+
+# ---------------------------------------------------------------------------
+# _build_advanced_body — islem=2 gelişmiş/filtreli arama POST gövdesi
+# ---------------------------------------------------------------------------
+
+
+class TestBuildAdvancedBody:
+    def test_defaults_are_zero_and_durum_3(self):
+        from yoktez_mcp.search import _build_advanced_body
+
+        body = _build_advanced_body(tur="2", year_from="2023", year_to="2023")
+        assert body["islem"] == "2"
+        assert body["Durum"] == "3"
+        assert body["source"] == "TR"
+        assert body["Enstitu"] == "0"
+        assert body["ABD"] == "0"
+        assert body["Dil"] == "0"
+        assert body["izin"] == "0"
+        assert body["Bolum"] == "0"
+        assert body["Tur"] == "2"
+        assert body["yil1"] == "2023"
+        assert body["yil2"] == "2023"
+        assert body["-find"].strip() == "Bul"
+
+    def test_university_scope_sets_kod_and_yoksis(self):
+        from yoktez_mcp.search import _build_advanced_body
+
+        body = _build_advanced_body(
+            university_kod="ENC", university_yoksis="YID",
+            university_name="İSTANBUL ÜNİVERSİTESİ",
+        )
+        assert body["Universite"] == "ENC"
+        assert body["uni_yoksis_id"] == "YID"
+        assert body["uniad"] == "İSTANBUL ÜNİVERSİTESİ"
+
+    def test_text_filters_default_empty(self):
+        from yoktez_mcp.search import _build_advanced_body
+
+        body = _build_advanced_body()
+        assert body["TezAd"] == ""
+        assert body["AdSoyad"] == ""
+        assert body["DanismanAdSoyad"] == ""
+        assert body["Universite"] == ""
+
+
+# ---------------------------------------------------------------------------
+# normalize_person_name — advisor/author name → "Ad Soyad"
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizePersonName:
+    def test_surname_first_to_given_first(self):
+        from yoktez_mcp.search import normalize_person_name
+
+        assert normalize_person_name("Bozkurt, Veysel") == "Veysel Bozkurt"
+
+    def test_strips_titles(self):
+        from yoktez_mcp.search import normalize_person_name
+
+        assert normalize_person_name("PROF. DR. Veysel Bozkurt") == "Veysel Bozkurt"
+        assert (
+            normalize_person_name("Doç. Dr. Aslı Deniz Helvacıoğlu")
+            == "Aslı Deniz Helvacıoğlu"
+        )
+
+    def test_strips_dr_ogr_uyesi(self):
+        from yoktez_mcp.search import normalize_person_name
+
+        assert normalize_person_name("Dr. Öğr. Üyesi Hüseyin Eski") == "Hüseyin Eski"
+
+    def test_plain_name_unchanged(self):
+        from yoktez_mcp.search import normalize_person_name
+
+        assert normalize_person_name("Veysel Bozkurt") == "Veysel Bozkurt"
+
+    def test_collapses_whitespace(self):
+        from yoktez_mcp.search import normalize_person_name
+
+        assert normalize_person_name("  Veysel   Bozkurt  ") == "Veysel Bozkurt"
+
+
+# ---------------------------------------------------------------------------
 # Live test (network required)
 # ---------------------------------------------------------------------------
 
@@ -260,3 +408,41 @@ async def test_live_search_keyword_yapay_zeka():
     assert len(result.hits) > 0
     for hit in result.hits:
         assert hit.kayit_no, "kayit_no must not be empty"
+
+
+@pytest.mark.live
+@pytest.mark.asyncio
+async def test_live_multi_word_and_returns_hits():
+    """Live: 'yapay zeka hukuk' artık boolean slotlarla >0 sonuç döndürür."""
+    result = await search_keyword("yapay zeka hukuk", field="all")
+    assert len(result.hits) > 0
+
+
+@pytest.mark.live
+@pytest.mark.asyncio
+async def test_live_advanced_university_scope():
+    """Live: islem=2 üniversite kapsamı doğru üniversiteye filtreler."""
+    from yoktez_mcp import facets, search
+
+    uni = facets.find_university("İstanbul Üniversitesi")[0]
+    res = await search.search_advanced(
+        university_kod=uni["kod"], university_yoksis=uni["yoksis_id"],
+        university_name=uni["name"], tur="2", year_from="2023", year_to="2023",
+    )
+    assert res.hits
+    assert all(
+        "İSTANBUL ÜNİVERSİTESİ" in (h.university or "").upper() for h in res.hits[:10]
+    )
+
+
+@pytest.mark.live
+@pytest.mark.asyncio
+async def test_live_advisor_normalized_returns_known_thesis():
+    """Live: bilinen danışman (Türkçe karakterli) 'Ad Soyad' ile sonuç döndürür."""
+    from yoktez_mcp.search import normalize_person_name
+
+    res = await search_keyword(
+        normalize_person_name("Doç. Dr. Aslı Deniz Helvacıoğlu"),
+        field="advisor", match="contains",
+    )
+    assert len(res.hits) > 0

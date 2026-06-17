@@ -104,8 +104,8 @@ def register(mcp) -> None:
     @mcp.prompt(
         name="universite_uretim_haritasi",
         description=(
-            "Bir üniversitenin tez üretimini harita olarak çıkar — "
-            "yalnızca yerel indeks (islem=2 şu an kullanılamıyor), kapsam dürüstçe bildirilir."
+            "Bir üniversitenin tez üretimini harita olarak çıkar — canlı islem=2 "
+            "(sunucu-taraflı üniversite filtresi) + yerel indeks; kapsam dürüstçe bildirilir."
         ),
     )
     def universite_uretim_haritasi(university: str) -> str:
@@ -113,10 +113,10 @@ def register(mcp) -> None:
             f"'{university}' üniversitesinin tez üretimini analiz et ve bir üretim haritası çıkar.\n\n"
             f"1. `list_university_theses(university=\"{university}\")` ile üniversiteye ait\n"
             "   tezleri getir.\n"
-            "   ⚠️  ÖNEMLİ KAPSAM NOTU: Bu araç YALNIZCA yerel FTS5 indeksini kullanır.\n"
-            "   YÖKTEZ sunucu taraflı üniversite filtresi (islem=2) şu an KULLANILAMIYOR\n"
-            "   (sunucu hatası). Yanıttaki ``source: 'index'`` ve ``notes`` alanlarını\n"
-            "   kullanıcıya ilet; 'indeks boş ise seed index henüz derlenmedi' uyarısını ekle.\n"
+            "   KAPSAM NOTU: Bu araç üniversite facet'te bulunursa canlı islem=2 ile\n"
+            "   sunucu-taraflı kapsama yapar ve yerel indeksle birleştirir. Yanıttaki\n"
+            "   ``source`` (live/hybrid/index), ``coverage_complete`` ve ``notes`` alanlarını\n"
+            "   kullanıcıya ilet (örn. 2000-cap veya facet'te bulunamama durumları).\n"
             "2. İndekste veri varsa şu eksenlerle haritala:\n"
             "   a) Toplam tez sayısı, tür dağılımı (YL / Doktora / Sanatta Yeterlik).\n"
             "   b) Yıllık dağılım: hangi dönemde tez üretimi yoğunlaşmış?\n"
