@@ -481,14 +481,17 @@ async def find_advisor_theses(advisor: str, limit: int = 20) -> dict:
     live_total = 0
     live_complete = True
     try:
-        live_result = await search.search_keyword(advisor, field="advisor", match="contains")
+        # Canlı arama 'Ad Soyad' biçimi ister (probe: 'Soyad, Ad' → 0 sonuç).
+        live_result = await search.search_keyword(
+            search.normalize_person_name(advisor), field="advisor", match="contains"
+        )
         live_hits = live_result.hits
         live_total = live_result.total_found
         live_complete = live_result.coverage_complete
     except Exception as exc:
         live_error = f"{type(exc).__name__}: {exc}"
 
-    # Yerel indeks
+    # Yerel indeks (ham scrape'lenmiş adla; indeks kendi normalizasyonunu yapar)
     idx = index.get_default_index()
     idx_result = idx.by_advisor(advisor, limit=limit * 2)
 
@@ -535,7 +538,9 @@ async def find_author_theses(author: str, limit: int = 20) -> dict:
     live_total = 0
     live_complete = True
     try:
-        live_result = await search.search_keyword(author, field="author", match="contains")
+        live_result = await search.search_keyword(
+            search.normalize_person_name(author), field="author", match="contains"
+        )
         live_hits = live_result.hits
         live_total = live_result.total_found
         live_complete = live_result.coverage_complete
@@ -838,7 +843,9 @@ async def _resolve_advisor(name: str, limit: int = 20) -> dict:
     live_total = 0
     live_complete = True
     try:
-        live_result = await search.search_keyword(name, field="advisor", match="contains")
+        live_result = await search.search_keyword(
+            search.normalize_person_name(name), field="advisor", match="contains"
+        )
         live_hits = live_result.hits
         live_total = live_result.total_found
         live_complete = live_result.coverage_complete

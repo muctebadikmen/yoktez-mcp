@@ -294,6 +294,42 @@ class TestBuildKeywordSlots:
 
 
 # ---------------------------------------------------------------------------
+# normalize_person_name — advisor/author name → "Ad Soyad"
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizePersonName:
+    def test_surname_first_to_given_first(self):
+        from yoktez_mcp.search import normalize_person_name
+
+        assert normalize_person_name("Bozkurt, Veysel") == "Veysel Bozkurt"
+
+    def test_strips_titles(self):
+        from yoktez_mcp.search import normalize_person_name
+
+        assert normalize_person_name("PROF. DR. Veysel Bozkurt") == "Veysel Bozkurt"
+        assert (
+            normalize_person_name("Doç. Dr. Aslı Deniz Helvacıoğlu")
+            == "Aslı Deniz Helvacıoğlu"
+        )
+
+    def test_strips_dr_ogr_uyesi(self):
+        from yoktez_mcp.search import normalize_person_name
+
+        assert normalize_person_name("Dr. Öğr. Üyesi Hüseyin Eski") == "Hüseyin Eski"
+
+    def test_plain_name_unchanged(self):
+        from yoktez_mcp.search import normalize_person_name
+
+        assert normalize_person_name("Veysel Bozkurt") == "Veysel Bozkurt"
+
+    def test_collapses_whitespace(self):
+        from yoktez_mcp.search import normalize_person_name
+
+        assert normalize_person_name("  Veysel   Bozkurt  ") == "Veysel Bozkurt"
+
+
+# ---------------------------------------------------------------------------
 # Live test (network required)
 # ---------------------------------------------------------------------------
 

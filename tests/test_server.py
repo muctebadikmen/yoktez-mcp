@@ -915,6 +915,47 @@ async def test_university_resource_returns_index_note(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Advisor/author isim normalizasyonu — canlı çağrıya 'Ad Soyad' geçilmeli
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_find_advisor_normalizes_surname_first(monkeypatch):
+    """find_advisor_theses canlı çağrıya 'Ad Soyad' biçimini geçirmeli."""
+    captured: dict = {}
+
+    async def fake_keyword(query, **kw):
+        captured["query"] = query
+        captured["field"] = kw.get("field")
+        return SearchResult(hits=[], total_found=0, shown=0,
+                            coverage_complete=True, source="live", notes=[])
+
+    monkeypatch.setattr(_search_mod, "search_keyword", fake_keyword)
+    monkeypatch.setattr(_index_mod, "get_default_index", lambda: _EmptyIndex())
+    srv = _import_server()
+    await srv.find_advisor_theses("Bozkurt, Veysel")
+    assert captured["query"] == "Veysel Bozkurt"
+    assert captured["field"] == "advisor"
+
+
+@pytest.mark.asyncio
+async def test_find_author_strips_title(monkeypatch):
+    """find_author_theses canlı çağrıya ünvansız adı geçirmeli."""
+    captured: dict = {}
+
+    async def fake_keyword(query, **kw):
+        captured["query"] = query
+        return SearchResult(hits=[], total_found=0, shown=0,
+                            coverage_complete=True, source="live", notes=[])
+
+    monkeypatch.setattr(_search_mod, "search_keyword", fake_keyword)
+    monkeypatch.setattr(_index_mod, "get_default_index", lambda: _EmptyIndex())
+    srv = _import_server()
+    await srv.find_author_theses("Prof. Dr. Zeynep Kılıç")
+    assert captured["query"] == "Zeynep Kılıç"
+
+
+# ---------------------------------------------------------------------------
 
 async def _async_return(value):
     """Sabit bir değeri döndüren coroutine."""

@@ -20,6 +20,38 @@ from bs4 import BeautifulSoup
 
 from .http import post_form
 from .models import SearchHit, SearchResult
+from .text import tr_fold
+
+# Akademik ünvan token'ları (tr_fold edilmiş) — isim başından ayıklanır.
+_TITLE_TOKENS = {
+    tr_fold(t)
+    for t in {
+        "prof", "doç", "doc", "dr", "öğr", "ogr", "üyesi", "uyesi", "üye",
+        "yrd", "arş", "ars", "gör", "gor", "uzm", "öğretim", "ogretim",
+    }
+}
+
+
+def normalize_person_name(name: str) -> str:
+    """Kişi adını YÖKTEZ'in beklediği 'Ad Soyad' biçimine getirir.
+
+    Canlı probe ile doğrulandı: nevi=3 danışman araması 'Ad Soyad' ile çalışır
+    (58 sonuç), 'Soyad, Ad' (virgüllü) ile 0 döner. Ayrıca 'Prof. Dr.' / 'Doç. Dr.'
+    / 'Dr. Öğr. Üyesi' gibi ünvan ön ekleri eşleşmeyi bozar.
+
+    - Baştaki akademik ünvan token'larını ayıklar.
+    - 'Soyad, Ad' → 'Ad Soyad'.
+    - Fazla boşlukları sadeleştirir.
+    """
+    tokens = (name or "").split()
+    i = 0
+    while i < len(tokens) and tr_fold(tokens[i].rstrip(".")) in _TITLE_TOKENS:
+        i += 1
+    rest = " ".join(tokens[i:])
+    if "," in rest:
+        surname, _, given = rest.partition(",")
+        rest = f"{given.strip()} {surname.strip()}"
+    return " ".join(rest.split())
 
 # ---------------------------------------------------------------------------
 # Sabitler
