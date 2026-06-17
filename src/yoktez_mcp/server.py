@@ -27,7 +27,7 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from . import citations, detail, facets, index, pdf, prompts, relevance, search
+from . import citations, coverage, detail, facets, index, pdf, prompts, relevance, search
 from .models import AccessStatus, Thesis
 from .text import tr_fold
 
@@ -209,12 +209,16 @@ async def _university_listing(
     year_from: int | None = None,
     year_to: int | None = None,
     limit: int = 50,
+    exhaustive: bool = False,
 ) -> dict:
     """Üniversite tez listesi — canlı islem=2 (facet kod+yoksis) + yerel indeks.
 
     Hem ``list_university_theses`` aracı hem de ``yoktez://university/{name}``
     resource'u buraya delege eder. Facet'te bulunamayan üniversite için canlıya
     ÇIKILMAZ (kod/yoksis gerekir); yalnızca indeks kullanılır ve dürüstçe bildirilir.
+
+    ``exhaustive=True``: tek islem=2 sorgusu 2000-cap'e takılırsa yıl-dilimleme ile
+    cap aşılır (coverage.collect_all_advanced) → eksiksiz kapsam (daha çok istek).
     """
     idx = index.get_default_index()
     idx_result = idx.by_university(
@@ -243,15 +247,32 @@ async def _university_listing(
                 f"({u['name']}) kullanıldı. Daha belirgin bir ad verin."
             )
         try:
-            live_result = await search.search_advanced(
-                university_kod=u["kod"], university_yoksis=u["yoksis_id"],
-                university_name=u["name"], tur=_tur_code(thesis_type),
-                year_from=str(year_from) if year_from else "0",
-                year_to=str(year_to) if year_to else "0",
-            )
-            live_hits = live_result.hits
-            live_total = live_result.total_found
-            live_complete = live_result.coverage_complete
+            if exhaustive:
+                yf = year_from or coverage.DEFAULT_YEAR_FROM
+                yt = year_to or coverage.DEFAULT_YEAR_TO
+                hits, complete, reqs = await coverage.collect_all_advanced(
+                    university_kod=u["kod"], university_yoksis=u["yoksis_id"],
+                    university_name=u["name"], tur=_tur_code(thesis_type),
+                    year_from=yf, year_to=yt,
+                )
+                live_hits = hits
+                live_total = len(hits)  # eksiksiz: toplam = toplanan benzersiz sayı
+                live_complete = complete
+                notes.append(
+                    f"Eksiksiz (exhaustive) mod: {yf}-{yt} yılları {reqs} sorguda "
+                    f"tarandı, {len(hits)} tez toplandı (2000-cap aşıldı)."
+                    + ("" if complete else " ⚠️ Bazı dilimler hâlâ cap-altı tamamlanamadı.")
+                )
+            else:
+                live_result = await search.search_advanced(
+                    university_kod=u["kod"], university_yoksis=u["yoksis_id"],
+                    university_name=u["name"], tur=_tur_code(thesis_type),
+                    year_from=str(year_from) if year_from else "0",
+                    year_to=str(year_to) if year_to else "0",
+                )
+                live_hits = live_result.hits
+                live_total = live_result.total_found
+                live_complete = live_result.coverage_complete
         except Exception as exc:  # noqa: BLE001
             live_error = f"{type(exc).__name__}: {exc}"
 
@@ -283,10 +304,10 @@ async def _university_listing(
             f"Canlı üniversite araması (islem=2) başarısız oldu: {live_error}. "
             "Yalnızca yerel indeks kullanıldı."
         )
-    if not live_complete:
+    if not live_complete and not exhaustive:
         notes.append(
             f"YÖKTEZ canlı sonuçları 2000-cap ile sınırlı ({live_total} toplam). "
-            "Yıl veya tür ile daraltın."
+            "Tam liste için exhaustive=True verin ya da yıl/tür ile daraltın."
         )
     if not page:
         notes.append("Bu üniversite için tez bulunamadı (canlı + indeks).")
@@ -295,6 +316,7 @@ async def _university_listing(
         "university_query": university,
         "source": source,
         "total_found": live_total,
+        "coverage_complete": live_complete,
         "count": len(page),
         "results": [_hit_to_dict(h) for h in page],
         "notes": notes,
@@ -737,6 +759,7 @@ async def list_university_theses(
     year_from: int | None = None,
     year_to: int | None = None,
     limit: int = 50,
+    exhaustive: bool = False,
 ) -> dict:
     """Bir üniversitenin tezlerini listele — canlı islem=2 + yerel indeks (hibrit).
 
@@ -749,14 +772,17 @@ async def list_university_theses(
         thesis_type: Tez türü filtresi (örn. "Doktora").
         year_from: Bu yıldan itibaren (dahil).
         year_to: Bu yıla kadar (dahil).
-        limit: En fazla sonuç sayısı.
+        limit: En fazla DÖNDÜRÜLEN sonuç sayısı (total_found gerçek toplamı bildirir).
+        exhaustive: True ise YÖK'ün 2000 sonuç/sorgu sınırı yıl-dilimleme ile aşılır
+            → eksiksiz kapsam. Çok daha fazla (nazik, sıralı) istek üretir; yalnızca
+            bir üniversitenin TÜM tezleri gerçekten gerektiğinde kullanın.
     """
     if not university or not university.strip():
         raise ToolError("university adı boş olamaz.")
 
     return await _university_listing(
         university, thesis_type=thesis_type,
-        year_from=year_from, year_to=year_to, limit=limit,
+        year_from=year_from, year_to=year_to, limit=limit, exhaustive=exhaustive,
     )
 
 

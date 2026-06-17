@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import pytest
 
+import yoktez_mcp.coverage as _coverage_mod
 import yoktez_mcp.detail as _detail_mod
 import yoktez_mcp.facets as _facets_mod
 import yoktez_mcp.index as _index_mod
@@ -639,6 +640,34 @@ async def test_list_university_uses_live_islem2(monkeypatch):
     assert captured["tur"] == "2"  # Doktora → 2
     # Artık geçerli olmayan "islem=2 kullanılamıyor" notu OLMAMALI.
     assert not any("kullanılamıyor" in n for n in out["notes"])
+
+
+@pytest.mark.asyncio
+async def test_list_university_exhaustive_uses_coverage(monkeypatch):
+    """exhaustive=True → coverage.collect_all_advanced ile 2000-cap aşılır."""
+    monkeypatch.setattr(_facets_mod, "find_university",
+        lambda q: [{"kod": "ENC", "name": "X ÜNİVERSİTESİ", "yoksis_id": "YID"}])
+    called: dict = {}
+
+    async def fake_collect(**kw):
+        called.update(kw)
+        return ([_HIT_1, _HIT_2], True, 42)  # (hits, complete, request_count)
+
+    async def fake_adv(**kw):
+        raise AssertionError("exhaustive modda tek-sorgu search_advanced çağrılmamalı")
+
+    monkeypatch.setattr(_coverage_mod, "collect_all_advanced", fake_collect)
+    monkeypatch.setattr(_search_mod, "search_advanced", fake_adv)
+    monkeypatch.setattr(_index_mod, "get_default_index", lambda: _EmptyIndex())
+
+    srv = _import_server()
+    out = await srv.list_university_theses("X Üniversitesi", thesis_type="Doktora", exhaustive=True)
+    assert out["count"] == 2
+    assert out["coverage_complete"] is True
+    assert out["total_found"] == 2
+    assert called["tur"] == "2"
+    # eksiksiz tarama + istek sayısı dürüstçe notta
+    assert any("42" in n for n in out["notes"])
 
 
 @pytest.mark.asyncio
