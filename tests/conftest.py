@@ -22,6 +22,7 @@ def _reset_shared_async_state():
         _http._semaphore = None
         _http._rate_lock = None
         _http._last_request_ts = 0.0
+        _http._session_seeded = False
     except ImportError:
         pass
 
