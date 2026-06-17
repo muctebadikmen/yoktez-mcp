@@ -174,6 +174,118 @@ def _dedupe_hits(hits: list) -> list:
     return out
 
 
+def _tur_code(label: str | None) -> str:
+    """Tez türü etiketini ('Doktora') islem=2 Tur koduna ('2') çevirir; bilinmezse '0'."""
+    if not label:
+        return "0"
+    lf = tr_fold(label)
+    for code, name in facets.ENUMS["Tur"].items():
+        if tr_fold(name) == lf:
+            return str(code)
+    for code, name in facets.ENUMS["Tur"].items():
+        if lf in tr_fold(name):
+            return str(code)
+    return "0"
+
+
+async def _university_listing(
+    university: str,
+    *,
+    thesis_type: str | None = None,
+    year_from: int | None = None,
+    year_to: int | None = None,
+    limit: int = 50,
+) -> dict:
+    """Üniversite tez listesi — canlı islem=2 (facet kod+yoksis) + yerel indeks.
+
+    Hem ``list_university_theses`` aracı hem de ``yoktez://university/{name}``
+    resource'u buraya delege eder. Facet'te bulunamayan üniversite için canlıya
+    ÇIKILMAZ (kod/yoksis gerekir); yalnızca indeks kullanılır ve dürüstçe bildirilir.
+    """
+    idx = index.get_default_index()
+    idx_result = idx.by_university(
+        university, thesis_type=thesis_type, year_from=year_from,
+        year_to=year_to, limit=limit,
+    )
+
+    notes: list[str] = []
+    live_hits: list = []
+    live_total: int | None = None
+    live_complete = True
+    live_error: str | None = None
+
+    unis = facets.find_university(university)
+    if not unis:
+        notes.append(
+            "Üniversite, facet sözlüğünde bulunamadı; canlı (islem=2) kapsama için "
+            "şifreli kod gerektiğinden yalnızca yerel indeks kullanıldı. "
+            "Adı tam/farklı yazmayı deneyin (örn. 'Boğaziçi Üniversitesi')."
+        )
+    else:
+        u = unis[0]
+        if len(unis) > 1:
+            notes.append(
+                f"'{university}' için {len(unis)} üniversite eşleşti; ilki "
+                f"({u['name']}) kullanıldı. Daha belirgin bir ad verin."
+            )
+        try:
+            live_result = await search.search_advanced(
+                university_kod=u["kod"], university_yoksis=u["yoksis_id"],
+                university_name=u["name"], tur=_tur_code(thesis_type),
+                year_from=str(year_from) if year_from else "0",
+                year_to=str(year_to) if year_to else "0",
+            )
+            live_hits = live_result.hits
+            live_total = live_result.total_found
+            live_complete = live_result.coverage_complete
+        except Exception as exc:  # noqa: BLE001
+            live_error = f"{type(exc).__name__}: {exc}"
+
+    # Canlı sonuçlar sunucu tarafında üniversiteye göre kapsamlanmıştır; indeks
+    # zaten üniversite-filtrelidir. Üniversite adı client-filtresi UYGULANMAZ.
+    all_hits = _dedupe_hits(live_hits + list(idx_result.hits))
+    # tür/yıl için savunmacı client-filtre (eşlenemeyen Tur kodu durumunu kapsar)
+    if thesis_type:
+        all_hits = [h for h in all_hits if _fold_contains(h.thesis_type, thesis_type)]
+    if year_from is not None:
+        all_hits = [h for h in all_hits if h.year is not None and h.year >= year_from]
+    if year_to is not None:
+        all_hits = [h for h in all_hits if h.year is not None and h.year <= year_to]
+    page = all_hits[:limit]
+
+    live_has = bool(live_hits)
+    index_has = bool(idx_result.hits)
+    if live_has and index_has:
+        source = "hybrid"
+    elif live_has:
+        source = "live"
+    else:
+        source = "index"
+
+    if live_error:
+        notes.append(
+            f"Canlı üniversite araması (islem=2) başarısız oldu: {live_error}. "
+            "Yalnızca yerel indeks kullanıldı."
+        )
+    if not live_complete:
+        notes.append(
+            f"YÖKTEZ canlı sonuçları 2000-cap ile sınırlı ({live_total} toplam). "
+            "Yıl veya tür ile daraltın."
+        )
+    if not page:
+        notes.append("Bu üniversite için tez bulunamadı (canlı + indeks).")
+
+    return {
+        "university_query": university,
+        "source": source,
+        "total_found": live_total,
+        "count": len(page),
+        "results": [_hit_to_dict(h) for h in page],
+        "notes": notes,
+        "source_notice": SOURCE_NOTICE,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Araçlar
 # ---------------------------------------------------------------------------
@@ -585,10 +697,11 @@ async def list_university_theses(
     year_to: int | None = None,
     limit: int = 50,
 ) -> dict:
-    """Bir üniversitenin tezlerini listele — yalnızca yerel indeks.
+    """Bir üniversitenin tezlerini listele — canlı islem=2 + yerel indeks (hibrit).
 
-    ⚠️  Üniversite bazlı canlı arama (islem=2) şu an KULLANILAMIYOR (sunucu hatası).
-    Yalnızca yerel FTS5 indeksindeki tezler döndürülür. İndeks boşsa dürüstçe bildirilir.
+    Üniversite adı facet sözlüğünde bulunursa şifreli kod ile sunucu-taraflı
+    (islem=2) kapsama yapılır; ayrıca yerel indeks sonuçlarıyla birleştirilir.
+    Facet'te bulunamayan üniversite için yalnızca indeks kullanılır (dürüstçe bildirilir).
 
     Args:
         university: Üniversite adı (Türkçe-duyarlı, kısmi eşleşme).
@@ -600,37 +713,10 @@ async def list_university_theses(
     if not university or not university.strip():
         raise ToolError("university adı boş olamaz.")
 
-    idx = index.get_default_index()
-    result = idx.by_university(
-        university,
-        thesis_type=thesis_type,
-        year_from=year_from,
-        year_to=year_to,
-        limit=limit,
+    return await _university_listing(
+        university, thesis_type=thesis_type,
+        year_from=year_from, year_to=year_to, limit=limit,
     )
-
-    notes: list[str] = [
-        "Canlı üniversite bazlı arama (islem=2) şu an kullanılamıyor (sunucu hatası). "
-        "Yalnızca yerel indeks kullanıldı."
-    ]
-
-    if result.total_found == 0:
-        notes.append(
-            "İndekste bu üniversite için tez bulunamadı. "
-            "Olası nedenler: (1) seed indeksi henüz derlenmedi — "
-            "'Live university-scoped search requires advanced search (currently unavailable); "
-            "seed index not yet built.' (2) Üniversite adı farklı yazılmış olabilir."
-        )
-
-    return {
-        "university_query": university,
-        "source": "index",
-        "total_found": result.total_found,
-        "count": len(result.hits),
-        "results": [_hit_to_dict(h) for h in result.hits],
-        "notes": notes,
-        "source_notice": SOURCE_NOTICE,
-    }
 
 
 @mcp.tool(annotations=READONLY)
@@ -883,29 +969,7 @@ async def _resolve_advisor(name: str, limit: int = 20) -> dict:
 
 async def _resolve_university(name: str, limit: int = 50) -> dict:
     """list_university_theses aracıyla aynı mantık — araç ve resource paylaşır."""
-    idx = index.get_default_index()
-    result = idx.by_university(name, limit=limit)
-
-    notes: list[str] = [
-        "Canlı üniversite bazlı arama (islem=2) şu an kullanılamıyor (sunucu hatası). "
-        "Yalnızca yerel indeks kullanıldı."
-    ]
-    if result.total_found == 0:
-        notes.append(
-            "İndekste bu üniversite için tez bulunamadı. "
-            "Olası nedenler: (1) seed indeksi henüz derlenmedi, "
-            "(2) üniversite adı farklı yazılmış olabilir."
-        )
-
-    return {
-        "university_query": name,
-        "source": "index",
-        "total_found": result.total_found,
-        "count": len(result.hits),
-        "results": [_hit_to_dict(h) for h in result.hits],
-        "notes": notes,
-        "source_notice": SOURCE_NOTICE,
-    }
+    return await _university_listing(name, limit=limit)
 
 
 @mcp.resource(

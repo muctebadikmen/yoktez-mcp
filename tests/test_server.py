@@ -556,33 +556,74 @@ async def test_fulltext_open_sections_present(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_list_university_theses_empty_index_honest_note(monkeypatch):
-    """Boş indeks → honest not (seed not yet built / unavailable)."""
+async def test_list_university_uses_live_islem2(monkeypatch):
+    """Üniversite facet'te bulunursa islem=2 canlı yol kullanılır; eski not kalkar."""
+    monkeypatch.setattr(_facets_mod, "find_university",
+        lambda q: [{"kod": "ENC", "name": "X ÜNİVERSİTESİ", "yoksis_id": "YID"}])
+    captured: dict = {}
+
+    async def fake_adv(**kw):
+        captured.update(kw)
+        return SearchResult(hits=[_HIT_1], total_found=1, shown=1,
+                            coverage_complete=True, source="live", notes=[])
+
+    monkeypatch.setattr(_search_mod, "search_advanced", fake_adv)
     monkeypatch.setattr(_index_mod, "get_default_index", lambda: _EmptyIndex())
 
     srv = _import_server()
-    result = await srv.list_university_theses("İstanbul Üniversitesi")
+    out = await srv.list_university_theses("X Üniversitesi", thesis_type="Doktora")
 
-    assert result["total_found"] == 0
-    assert result["count"] == 0
-    # islem=2 unavailable notu var mı?
-    notes_text = " ".join(result["notes"])
-    assert "islem=2" in notes_text or "kullanılamıyor" in notes_text or "unavailable" in notes_text
-    # seed not built / empty mesajı
-    assert "seed" in notes_text or "indeks" in notes_text or "bulunamadı" in notes_text
+    assert out["count"] == 1
+    assert out["source"] in ("live", "hybrid")
+    assert captured["university_kod"] == "ENC"
+    assert captured["university_yoksis"] == "YID"
+    assert captured["tur"] == "2"  # Doktora → 2
+    # Artık geçerli olmayan "islem=2 kullanılamıyor" notu OLMAMALI.
+    assert not any("kullanılamıyor" in n for n in out["notes"])
 
 
 @pytest.mark.asyncio
-async def test_list_university_theses_always_adds_islem2_note(monkeypatch):
-    """İndeks doluyken bile islem=2 notu eklenmeli."""
+async def test_list_university_facet_not_found_falls_back_to_index(monkeypatch):
+    """Facet'te yoksa canlıya çıkılmaz: yalnızca indeks + dürüst not."""
+    monkeypatch.setattr(_facets_mod, "find_university", lambda q: [])
+    called = {"adv": False}
+
+    async def fake_adv(**kw):
+        called["adv"] = True
+        return SearchResult(hits=[], total_found=0, shown=0,
+                            coverage_complete=True, source="live", notes=[])
+
+    monkeypatch.setattr(_search_mod, "search_advanced", fake_adv)
+    monkeypatch.setattr(_index_mod, "get_default_index", lambda: _EmptyIndex())
+
+    srv = _import_server()
+    out = await srv.list_university_theses("Bilinmeyen Üniversite")
+
+    assert called["adv"] is False  # facet yoksa canlıya çıkma
+    assert out["source"] == "index"
+    notes_text = " ".join(out["notes"]).lower()
+    assert "facet" in notes_text or "bulunamadı" in notes_text
+
+
+@pytest.mark.asyncio
+async def test_list_university_live_error_falls_back_to_index(monkeypatch):
+    """islem=2 hata verirse indekse düş + dürüst hata notu."""
+    monkeypatch.setattr(_facets_mod, "find_university",
+        lambda q: [{"kod": "ENC", "name": "X ÜNİVERSİTESİ", "yoksis_id": "YID"}])
+
+    async def fake_adv(**kw):
+        raise _search_mod.SearchError("Geçersiz sorgulama")
+
+    monkeypatch.setattr(_search_mod, "search_advanced", fake_adv)
     monkeypatch.setattr(_index_mod, "get_default_index",
                         lambda: _IndexWithHits([_HIT_1]))
 
     srv = _import_server()
-    result = await srv.list_university_theses("İstanbul Üniversitesi")
+    out = await srv.list_university_theses("X Üniversitesi")
 
-    notes_text = " ".join(result["notes"])
-    assert "islem=2" in notes_text or "kullanılamıyor" in notes_text
+    assert out["source"] == "index"
+    notes_text = " ".join(out["notes"]).lower()
+    assert "başarısız" in notes_text or "hata" in notes_text
 
 
 # ---------------------------------------------------------------------------
@@ -906,6 +947,8 @@ async def test_advisor_resource_returns_source_notice(monkeypatch):
 async def test_university_resource_returns_index_note(monkeypatch):
     """yoktez://university/{name} → list_university_theses mantığını kullanır."""
     monkeypatch.setattr(_index_mod, "get_default_index", lambda: _EmptyIndex())
+    # Facet'i boş döndür → offline kalsın (canlı islem=2'ye çıkılmaz).
+    monkeypatch.setattr(_facets_mod, "find_university", lambda q: [])
 
     import yoktez_mcp.server as srv
 
