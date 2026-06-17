@@ -291,9 +291,14 @@ async def search_theses(
         # Hiç hit yok: canlı denendiyse "live" (attempt'i yansıt), yoksa "index"
         source = "live" if live_result is not None else "index"
 
-    live_total = live_result.total_found if live_result else 0
-    live_shown = live_result.shown if live_result else 0
-    live_complete = live_result.coverage_complete if live_result else True
+    # total_found = live server's reported total for this query (subject to the 2000 cap).
+    # Set to None (not 0) when live didn't contribute (live failed or returned no results),
+    # so consumers can distinguish "live says 0" from "live wasn't consulted".
+    # count = number of merged results actually returned (always an integer).
+    live_contributed = live_result is not None
+    live_total: int | None = live_result.total_found if live_contributed else None
+    live_shown = live_result.shown if live_contributed else 0
+    live_complete = live_result.coverage_complete if live_contributed else True
 
     notes: list[str] = []
     if live_error:

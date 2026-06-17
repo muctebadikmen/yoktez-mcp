@@ -370,6 +370,33 @@ async def test_search_theses_live_error_falls_back_to_index(monkeypatch):
     assert error_notes
 
 
+@pytest.mark.asyncio
+async def test_search_theses_total_found_none_when_live_fails(monkeypatch):
+    """Live SearchError + index hits → total_found must be None (not 0), count>0, source='index'.
+
+    When the live call fails entirely, total_found=0 would be misleading (it could mean
+    'live reported 0 results'). Setting it to None makes it unambiguous: live wasn't consulted.
+    """
+    async def _raise(*a, **kw):
+        raise _search_mod.SearchError("Bağlantı hatası")
+
+    monkeypatch.setattr(_search_mod, "search_keyword", _raise)
+    monkeypatch.setattr(_index_mod, "get_default_index",
+                        lambda: _IndexWithHits([_HIT_1, _HIT_2]))
+
+    srv = _import_server()
+    result = await srv.search_theses("yapay zeka")
+
+    assert result["total_found"] is None, (
+        f"total_found should be None when live failed, got {result['total_found']!r}"
+    )
+    assert result["count"] > 0, "count should be > 0 (index returned hits)"
+    assert result["results"], "results should be non-empty"
+    assert result["source"] == "index", f"source should be 'index', got {result['source']!r}"
+    live_fail_notes = [n for n in result["notes"] if "başarısız" in n.lower() or "hata" in n.lower()]
+    assert live_fail_notes, "A note about the live failure must be present"
+
+
 # ---------------------------------------------------------------------------
 # get_thesis testleri
 # ---------------------------------------------------------------------------
