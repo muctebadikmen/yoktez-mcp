@@ -86,3 +86,19 @@ Base URL: `https://tez.yok.gov.tr/UlusalTezMerkezi/`
 - `getUniversities_TR.html` — 260 universities JSON (encrypted kod + yoksisId).
 - `error_gecersiz_sorgulama.html` — islem=4 + filters → "Geçersiz sorgulama".
 - `error_hata_olustu.html` — islem=2 attempt → "Hata Oluştu".
+
+---
+
+## Addendum — `islem=2` advanced search status (probe #2, 2026-06-17): NOT CRACKED
+
+Programmatic `POST SearchTez` with `islem=2` (advanced/filtered) **could not be made to return results** via static curl. On the identical JSESSIONID/headers/UA, an `islem=4` control POST 302s to `tezSorguSonucYeni.jsp` (success) while every `islem=2` attempt returns `HTTP 200 → "Hata Oluştu"` (a server-side crash page, distinct from the islem=4 "Geçersiz sorgulama" validation page). 7 distinct well-formed attempts failed (type-only, browser-exact empty-string facets, real Hacettepe encrypted university kod, year range, full browser headers).
+
+**Correction to FINDINGS §2:** the empty→"0" coercion in the advanced form's submit JS applies to **only `Enstitu`, `yil1`, `yil2`** — the encrypted facets (`Universite`, `uni_yoksis_id`, `Konu`, `uniad`/`ensad`/`abdad`) are left as empty strings; `ABD`/`Bolum` are hardcoded `"0"`. Replicating this exact browser shape still crashed.
+
+**Best hypothesis:** the live served page runs additional submit-time JS not present in our static `tarama.html` (likely encrypting `Konu` or injecting a token/derived field), OR the encrypted facet `kod` tokens are session-bound. The crash (not a validation error) points to a server-side parse/decrypt exception on a field whose expected format we aren't sending.
+
+**Recommended crack:** capture the REAL browser network POST bytes for an islem=2 submit (Claude-in-Chrome `read_network_requests` / DevTools) against a live session, diff against attempt #4. The discriminator is almost certainly one field's value/format.
+
+**Consequence for the build:** live type/year/university-filtered search and the Faz 5 Tur×yıl×ABD seed-harvest slicing are blocked on this crack. Keyword search (islem=4) and keyword-field discovery (advisor via nevi=3, author via nevi=2) are unaffected. Plan Task 6 falls back to index-side filtering.
+
+New fixtures: `islem2_attempt_hata_olustu.html` (representative crash), `islem4_control_302_headers.txt` (control proof).
