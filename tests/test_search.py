@@ -220,6 +220,28 @@ class TestSearchKeywordPostShape:
         assert captured["tip"] == "1"
 
     @pytest.mark.asyncio
+    async def test_advisor_uses_single_uppercase_phrase_not_split(self, monkeypatch):
+        """Kişi adı (advisor/author) BÖLÜNMEZ: tek-phrase + Türkçe-büyük-harf.
+
+        Probe: nevi=3/2 için slot-AND split → 0; tek-phrase tr_upper → eşleşir.
+        """
+        captured: dict = {}
+
+        async def fake_post_form(endpoint: str, data: dict):
+            captured.update(data)
+            class FakeResp:
+                text = _read(f"{FIXTURE_BASE}/derived/results_islem4.html")
+            return FakeResp()
+
+        monkeypatch.setattr("yoktez_mcp.search.post_form", fake_post_form)
+        await search_keyword("Aslı Deniz Helvacıoğlu", field="advisor")
+
+        assert captured["nevi"] == "3"
+        assert captured["keyword"] == "ASLI DENİZ HELVACIOĞLU"
+        assert captured["keyword1"] == ""  # BÖLÜNMEMELİ
+        assert captured["keyword2"] == ""
+
+    @pytest.mark.asyncio
     async def test_post_data_all_field(self, monkeypatch):
         """field=all → nevi=7."""
         captured: dict = {}

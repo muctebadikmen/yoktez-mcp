@@ -45,6 +45,30 @@ def tr_fold(s: str | None) -> str:
     return s.translate(_TR_MAP).casefold()
 
 
+# ---------------------------------------------------------------------------
+# Türkçe büyük harf — YÖKTEZ kişi-adı eşleştirmesi için
+# ---------------------------------------------------------------------------
+
+# Python'un .upper()'ı Türkçe-yanlıştır (i→I, ı→I). YÖKTEZ kişi adlarını UPPER
+# saklar ve sunucunun ı/İ case-folding'i hatalıdır → adları doğru Türkçe büyük
+# harfe çevirip phrase olarak eşleştiririz (probe: 'ASLI DENİZ HELVACIOĞLU' → 6,
+# mixed-case → 0).
+_TR_UPPER_MAP = str.maketrans({
+    "i": "İ", "ı": "I",
+    "ş": "Ş", "ğ": "Ğ", "ü": "Ü", "ö": "Ö", "ç": "Ç",
+})
+
+
+def tr_upper(s: str | None) -> str:
+    """Türkçe-duyarlı büyük harf: i→İ, ı→I, ş→Ş, ğ→Ğ, ü→Ü, ö→Ö, ç→Ç + ASCII upper.
+
+    None veya boş string → "" döndürür.
+    """
+    if not s:
+        return ""
+    return s.translate(_TR_UPPER_MAP).upper()
+
+
 def fold_contains(haystack: str | None, needle: str) -> bool:
     """Türkçe-duyarlı alt dizi testi: needle, haystack içinde geçiyor mu?
 

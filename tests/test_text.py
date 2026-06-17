@@ -61,3 +61,27 @@ class TestFoldContains:
         assert fold_contains("ORTADOĞU TEKNİK ÜNİVERSİTESİ", "orta dogu") is False
         # exact substring match after folding
         assert fold_contains("ORTADOĞU TEKNİK ÜNİVERSİTESİ", "ortadogu teknik") is True
+
+
+class TestTrUpper:
+    def test_dotless_i_and_dotted_i(self) -> None:
+        # Türkçe büyük harf: ı→I, i→İ. YÖKTEZ adları UPPER saklar.
+        from yoktez_mcp.text import tr_upper
+        assert tr_upper("Aslı Deniz Helvacıoğlu") == "ASLI DENİZ HELVACIOĞLU"
+
+    def test_dotted_i_to_capital_dotted(self) -> None:
+        from yoktez_mcp.text import tr_upper
+        assert tr_upper("Pelin Su Biter") == "PELİN SU BİTER"
+
+    def test_other_turkish_chars(self) -> None:
+        from yoktez_mcp.text import tr_upper
+        assert tr_upper("şçöüğ") == "ŞÇÖÜĞ"
+
+    def test_already_upper_unchanged(self) -> None:
+        from yoktez_mcp.text import tr_upper
+        assert tr_upper("VEYSEL BOZKURT") == "VEYSEL BOZKURT"
+
+    def test_none_empty(self) -> None:
+        from yoktez_mcp.text import tr_upper
+        assert tr_upper(None) == ""
+        assert tr_upper("") == ""

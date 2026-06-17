@@ -20,7 +20,11 @@ from bs4 import BeautifulSoup
 
 from .http import post_form
 from .models import SearchHit, SearchResult
-from .text import tr_fold
+from .text import tr_fold, tr_upper
+
+# Kişi-adı alanları: çok-kelime slot-AND'i bu alanlarda çalışmaz (nevi=2/3) ve
+# Türkçe ı/İ case-folding sunucuda hatalı → tek-phrase + tr_upper kullanılır.
+_PERSON_FIELDS = {"author", "advisor"}
 
 # Akademik ünvan token'ları (tr_fold edilmiş) — isim başından ayıklanır.
 _TITLE_TOKENS = {
@@ -359,12 +363,18 @@ async def search_keyword(
     # Çok-kelimeli sorgu boolean slotlara bölünür (gerçek AND); tek kelime tek slot.
     if op not in ("and", "or", "not"):
         raise ValueError(f"Geçersiz op={op!r}. Geçerli: 'and', 'or', 'not'.")
-    data = {
-        **_build_keyword_slots(query, op),
-        "nevi": nevi,
-        "tip": tip,
-        "islem": "4",
-    }
+
+    if field in _PERSON_FIELDS:
+        # Kişi adı: tek-phrase + Türkçe-büyük-harf (slot-AND split bu alanlarda 0 döner).
+        slots = {
+            "keyword": tr_upper(query), "keyword1": "", "keyword2": "",
+            "ops_field": op, "ops_field1": op,
+        }
+    else:
+        # Konu/başlık: çok-kelimeyi boolean slotlara böl (gerçek AND).
+        slots = _build_keyword_slots(query, op)
+
+    data = {**slots, "nevi": nevi, "tip": tip, "islem": "4"}
 
     resp = await post_form("SearchTez", data)
     html = resp.text
