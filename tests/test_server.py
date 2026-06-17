@@ -16,6 +16,7 @@ from __future__ import annotations
 import pytest
 
 import yoktez_mcp.detail as _detail_mod
+import yoktez_mcp.facets as _facets_mod
 import yoktez_mcp.index as _index_mod
 import yoktez_mcp.pdf as _pdf_mod
 import yoktez_mcp.search as _search_mod
@@ -633,13 +634,45 @@ async def test_find_author_theses_has_source_notice(monkeypatch):
 # list_facets
 # ---------------------------------------------------------------------------
 
+_FAKE_FACETS = {
+    "enums": {
+        "Tur": {"1": "Yüksek Lisans", "2": "Doktora", "4": "Sanatta Yeterlik"},
+        "Dil": {"1": "Türkçe", "2": "İngilizce"},
+    },
+    "universities": ["İstanbul Üniversitesi", "Ankara Üniversitesi"],
+    "abd": ["Eğitim Bilimleri", "Bilgisayar Mühendisliği"],
+    "built_at": "2024-01-01T00:00:00",
+}
+
 
 @pytest.mark.asyncio
-async def test_list_facets_returns_enums():
-    """list_facets enums döndürmeli."""
+async def test_list_facets_returns_enums(monkeypatch):
+    """list_facets enums döndürmeli — bilinen enum anahtarı içerdiği doğrulanır."""
+    monkeypatch.setattr(_facets_mod, "load_facets", lambda: _FAKE_FACETS)
+    monkeypatch.setattr(_facets_mod, "find_university", lambda q: _FAKE_FACETS["universities"])
+    monkeypatch.setattr(_facets_mod, "find_abd", lambda q: _FAKE_FACETS["abd"])
+
     import yoktez_mcp.server as srv
     result = await srv.list_facets(kind="enums")
     assert "enums" in result
+    # I1 fix: bilinen içerik doğrulanmalı
+    assert "Tur" in result["enums"], "enums['Tur'] eksik"
+    assert "Doktora" in result["enums"]["Tur"].values(), "Doktora tür değeri eksik"
+
+
+@pytest.mark.asyncio
+async def test_list_facets_has_source_notice(monkeypatch):
+    """list_facets source_notice içermeli (M3)."""
+    monkeypatch.setattr(_facets_mod, "load_facets", lambda: _FAKE_FACETS)
+    monkeypatch.setattr(_facets_mod, "find_university", lambda q: _FAKE_FACETS["universities"])
+    monkeypatch.setattr(_facets_mod, "find_abd", lambda q: _FAKE_FACETS["abd"])
+
+    import yoktez_mcp.server as srv
+    result = await srv.list_facets()
+    assert "source_notice" in result
+    assert result["source_notice"]
+    # source_notice açıklayıcı olmalı (baked/static)
+    assert "baked" in result["source_notice"].lower() or "dictionary" in result["source_notice"].lower()
 
 
 @pytest.mark.asyncio
@@ -651,6 +684,125 @@ async def test_list_facets_invalid_kind():
 
     with pytest.raises(ToolError):
         await srv.list_facets(kind="invalid_kind")
+
+
+# ---------------------------------------------------------------------------
+# get_thesis_references — RESTRICTED path (M1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_references_restricted_has_references_false(monkeypatch):
+    """Kısıtlı tez → has_references=False (M1)."""
+    monkeypatch.setattr(_detail_mod, "get_thesis",
+                        lambda *a, **kw: _async_return(_RESTRICTED_THESIS))
+
+    srv = _import_server()
+    result = await srv.get_thesis_references("333", "t333")
+
+    assert result["has_references"] is False
+    assert result["access_status"] == "restricted"
+
+
+@pytest.mark.asyncio
+async def test_references_restricted_reason_wrapped(monkeypatch):
+    """Kısıtlı tezin erişim nedeni [EXTERNAL CONTENT] ile sarılmalı ve source_notice mevcut olmalı (M1)."""
+    monkeypatch.setattr(_detail_mod, "get_thesis",
+                        lambda *a, **kw: _async_return(_RESTRICTED_THESIS))
+
+    srv = _import_server()
+    result = await srv.get_thesis_references("333", "t333")
+
+    assert result["access_reason"] is not None
+    assert "[EXTERNAL CONTENT" in result["access_reason"]
+    assert "[/EXTERNAL CONTENT]" in result["access_reason"]
+    assert "kısıtlanmıştır" in result["access_reason"]
+    assert "source_notice" in result
+    assert result["source_notice"]
+
+
+@pytest.mark.asyncio
+async def test_references_restricted_never_calls_pdf(monkeypatch):
+    """Kısıtlı tez için pdf.download_and_extract çağrılmamalı (M1)."""
+    called = []
+
+    async def _should_not_be_called(*a, **kw):
+        called.append(True)
+        return _EXTRACTED_PDF
+
+    monkeypatch.setattr(_detail_mod, "get_thesis",
+                        lambda *a, **kw: _async_return(_RESTRICTED_THESIS))
+    monkeypatch.setattr(_pdf_mod, "download_and_extract", _should_not_be_called)
+
+    srv = _import_server()
+    await srv.get_thesis_references("333", "t333")
+    assert not called, "pdf.download_and_extract çağrılmamalıydı (kısıtlı tez)!"
+
+
+# ---------------------------------------------------------------------------
+# M2/M4: filters_used caveat yalnızca live hit varken eklenmeli
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_filters_caveat_present_when_live_hits_filtered(monkeypatch):
+    """Live hit + filtre kullanımı → filtre-caveat notu olmalı (M2/M4)."""
+    monkeypatch.setattr(_search_mod, "search_keyword",
+                        lambda *a, **kw: _async_return(SearchResult(
+                            hits=[_HIT_2], total_found=1, shown=1,
+                            coverage_complete=True, source="live", notes=[]
+                        )))
+    monkeypatch.setattr(_index_mod, "get_default_index", lambda: _EmptyIndex())
+
+    srv = _import_server()
+    result = await srv.search_theses("zeka", year_from=2018)
+
+    caveat_notes = [n for n in result["notes"] if "client-side" in n or "islem=2" in n]
+    assert caveat_notes, "Filtre-caveat notu eksik (live hit + filtre kombinasyonunda olmalı)"
+
+
+@pytest.mark.asyncio
+async def test_filters_caveat_absent_when_only_index_hits(monkeypatch):
+    """Yalnızca indeks hit + filtre → filtre-caveat notu OLMAMALI (M2/M4)."""
+    async def _live_empty(*a, **kw):
+        return SearchResult(
+            hits=[], total_found=0, shown=0,
+            coverage_complete=True, source="live", notes=[]
+        )
+
+    monkeypatch.setattr(_search_mod, "search_keyword", _live_empty)
+    monkeypatch.setattr(_index_mod, "get_default_index",
+                        lambda: _IndexWithHits([_HIT_1]))
+
+    srv = _import_server()
+    result = await srv.search_theses("yapay zeka", year_from=2020)
+
+    # source indeks olmalı (live 0 hit döndü)
+    assert result["source"] == "index"
+    caveat_notes = [n for n in result["notes"] if "client-side" in n or "islem=2" in n]
+    assert not caveat_notes, f"Filtre-caveat notu yalnızca-indeks durumunda olmamalı: {caveat_notes}"
+
+
+@pytest.mark.asyncio
+async def test_source_index_when_live_succeeds_but_empty(monkeypatch):
+    """Live başarılı ama 0 hit, indeks hit varsa → source='index' (I2)."""
+    async def _live_empty(*a, **kw):
+        return SearchResult(
+            hits=[], total_found=0, shown=0,
+            coverage_complete=True, source="live", notes=[]
+        )
+
+    monkeypatch.setattr(_search_mod, "search_keyword", _live_empty)
+    monkeypatch.setattr(_index_mod, "get_default_index",
+                        lambda: _IndexWithHits([_HIT_1]))
+
+    srv = _import_server()
+    result = await srv.search_theses("yapay zeka")
+
+    assert result["source"] == "index", (
+        f"source='index' beklendi ama '{result['source']}' döndü — "
+        "live 0 hit verdi, tüm hitler indeksten geldi"
+    )
 
 
 # ---------------------------------------------------------------------------

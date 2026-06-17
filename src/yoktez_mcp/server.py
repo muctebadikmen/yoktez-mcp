@@ -278,13 +278,18 @@ async def search_theses(
     # Limit uygula
     page = filtered_hits[:limit]
 
-    # 5. Kaynak bildir
-    if live_result and index_result.hits:
+    # 5. Kaynak bildir — yalnızca gerçekten katkıda bulunan kaynaklar sayılır
+    live_has = bool(live_result and live_result.hits)
+    index_has = bool(index_result and index_result.hits)
+    if live_has and index_has:
         source = "hybrid"
-    elif live_result:
+    elif live_has:
         source = "live"
-    else:
+    elif index_has:
         source = "index"
+    else:
+        # Hiç hit yok: canlı denendiyse "live" (attempt'i yansıt), yoksa "index"
+        source = "live" if live_result is not None else "index"
 
     live_total = live_result.total_found if live_result else 0
     live_shown = live_result.shown if live_result else 0
@@ -298,7 +303,8 @@ async def search_theses(
             f"YÖKTEZ canlı sonuçları 2000-cap ile sınırlı: {live_shown}/{live_total} gösteriliyor "
             "(coverage_complete=false). Filtreler yalnızca bu 2000 sonuç üzerinde uygulandı."
         )
-    if filters_used:
+    # Filtre notu yalnızca canlı hit mevcutsa eklenir; indeks zaten sunucu tarafında filtrelenmiştir.
+    if filters_used and live_has:
         notes.append(
             "Filtreler (tür/yıl/üniversite) canlı dönen set üzerinde client-side uygulandı "
             "— islem=2 (sunucu filtreli arama) şu an kullanılamıyor."
@@ -727,6 +733,10 @@ async def list_facets(kind: str | None = None, query: str | None = None) -> dict
     if "built_at" in data:
         result["built_at"] = data["built_at"]
 
+    result["source_notice"] = (
+        "Facet data is the server's own baked university/discipline/enum dictionary, "
+        "not external scraped content."
+    )
     return result
 
 
