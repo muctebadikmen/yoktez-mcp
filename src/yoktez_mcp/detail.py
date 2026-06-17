@@ -18,6 +18,7 @@ Dürüstlük ilkeleri (ürünün omurgası):
 
 from __future__ import annotations
 
+import html as _html_module
 import json
 import re
 
@@ -32,10 +33,98 @@ _RE_STRIP_TAGS = re.compile(r"<[^>]+>")
 _RE_PDF_KEY = re.compile(r"TezGoster\?key=([^'\"&\s]+)")
 _RE_WHITESPACE = re.compile(r"\s+")
 
+# APA ref format from tezBilgiDetay.jsp:
+#   SOYAD, A. (YYYY). <i>Başlık</i> (Tez No. NNNN) [Tür tezi, ÜNİVERSİTE]. Ulusal Tez Merkezi.
+# The (Tez No. ...) group is optional.
+_RE_APA = re.compile(
+    r"^(?P<author>.+?)\s*\((?P<year>\d{4})\)\.\s*"
+    r"<i>(?P<title>.+?)</i>\s*"
+    r"(?:\(Tez No\.\s*(?P<thesis_no>[^)]+)\)\s*)?"
+    r"\[(?P<bracket>[^\]]+)\]",
+    re.DOTALL,
+)
+
+# Map from APA bracket wording → canonical thesis_type label (THESIS_TYPE_BY_CODE values)
+_APA_BRACKET_TO_TYPE: dict[str, str] = {
+    "yüksek lisans tezi": "Yüksek Lisans",
+    "doktora tezi": "Doktora",
+    "tıpta uzmanlık tezi": "Tıpta Uzmanlık",
+    "sanatta yeterlik tezi": "Sanatta Yeterlik",
+    "diş hekimliği uzmanlık tezi": "Diş Hekimliği Uzmanlık",
+    "tıpta yan dal uzmanlık tezi": "Tıpta Yan Dal Uzmanlık",
+    "eczacılıkta uzmanlık tezi": "Eczacılıkta Uzmanlık",
+}
+
 
 def _strip_html(text: str) -> str:
     """HTML etiketlerini kaldırır, boşlukları normalleştirir."""
     return _RE_WHITESPACE.sub(" ", _RE_STRIP_TAGS.sub("", text)).strip()
+
+
+def _parse_apa_ref(apa: str) -> dict:
+    """YÖK APA referans metninden yazar, yıl, başlık, tez türü ve tez no çıkarır.
+
+    APA biçimi:
+      SOYAD, A. (YYYY). <i>Başlık</i> (Tez No. NNNN) [Tür tezi, ÜNİVERSİTE]. ...
+
+    Ayrıştırma başarısızsa ya da metin eksikse ilgili alan None olur (asla crash yok).
+    Yazar, APA'daki kısa hali döner ("KILIÇ, Z.") — base_meta'dan gelenler buna
+    tercih edilir (get_thesis'te override edilir).
+    """
+    result: dict = {
+        "apa_author": None,
+        "apa_year": None,
+        "apa_title": None,
+        "apa_thesis_type": None,
+        "apa_thesis_no": None,
+    }
+    if not apa:
+        return result
+
+    m = _RE_APA.match(apa)
+    if not m:
+        return result
+
+    # Yazar: YÖK APA formatı "SOYAD, A." → "A. SOYAD" olarak dönüştür.
+    # citations.py'deki split_name "Ad Soyad" biçimi bekler;
+    # "SOYAD, A." formunu olduğu gibi saklarsak split hatalı olur.
+    raw_author = m.group("author").strip()
+    if raw_author and "," in raw_author:
+        # "KILIÇ, Z." → family="KILIÇ", given="Z."
+        family_part, _, given_part = raw_author.partition(",")
+        family_part = family_part.strip()
+        given_part = given_part.strip()
+        # Yeniden birleştir: "Z. KILIÇ"
+        result["apa_author"] = f"{given_part} {family_part}".strip() or None
+    else:
+        result["apa_author"] = raw_author or None
+
+    # Yıl: int
+    try:
+        result["apa_year"] = int(m.group("year"))
+    except (TypeError, ValueError):
+        pass
+
+    # Başlık: <i> içeriğini HTML entity decode + boşluk normalize et
+    title_raw = m.group("title") or ""
+    title_clean = _RE_WHITESPACE.sub(" ", _html_module.unescape(title_raw)).strip()
+    result["apa_title"] = title_clean or None
+
+    # Tez No: boşlukları temizle
+    tn = m.group("thesis_no")
+    result["apa_thesis_no"] = tn.strip() if tn else None
+
+    # Tez türü: köşeli parantezdeki ilk virgülden önceki kısım
+    bracket = m.group("bracket") or ""
+    type_raw = bracket.split(",", 1)[0].strip()
+    canonical = _APA_BRACKET_TO_TYPE.get(type_raw.lower())
+    if canonical is None and type_raw:
+        # Bilinmeyen tür: " tezi" sonekini kaldır, title-case uygula
+        fallback = re.sub(r"\s+tezi$", "", type_raw, flags=re.IGNORECASE).strip()
+        canonical = fallback.title() if fallback else None
+    result["apa_thesis_type"] = canonical
+
+    return result
 
 
 def _split_keywords(raw: str) -> list[str]:
@@ -66,7 +155,12 @@ def parse_detail(json_text: str) -> dict:
 
     Döndürülen anahtarlar:
       advisor, university, institute, department, science_branch,
-      abstract_tr, abstract_en, keywords_tr, keywords_en, server_citations.
+      abstract_tr, abstract_en, keywords_tr, keywords_en, server_citations,
+      author, year, title, thesis_type, thesis_no.
+
+    ``author``/``year``/``title``/``thesis_type``/``thesis_no`` alanları
+    ``server_citations["apa"]`` metninden çıkarılır.  APA metni eksik ya da
+    ayrıştırılamazsa bu alanlar None olur (asla crash yok).
 
     Kısıtlı tezlerde özet alanları boş string gelir → None döndürülür.
     Anahtar kelimeler genellikle boş HTML gelir → [] döndürülür.
@@ -109,6 +203,9 @@ def parse_detail(json_text: str) -> dict:
         "harvard": data.get("harvard_ref", ""),
     }
 
+    # --- APA'dan bibliyografik alanlar çıkar (get_thesis fallback) ---
+    apa_fields = _parse_apa_ref(server_citations["apa"])
+
     return {
         "advisor": advisor,
         "university": university,
@@ -120,6 +217,12 @@ def parse_detail(json_text: str) -> dict:
         "keywords_tr": keywords_tr,
         "keywords_en": keywords_en,
         "server_citations": server_citations,
+        # Bibliographic fields derived from APA ref
+        "author": apa_fields["apa_author"],
+        "year": apa_fields["apa_year"],
+        "title": apa_fields["apa_title"],
+        "thesis_type": apa_fields["apa_thesis_type"],
+        "thesis_no": apa_fields["apa_thesis_no"],
     }
 
 
@@ -190,6 +293,9 @@ async def get_thesis(
     detail = parse_detail(detail_json)
     status, reason, pdf_key = parse_access(pdf_html)
 
+    # Önce APA'dan çıkarılan alanları fallback olarak ata,
+    # ardından base_meta değerleri (daha güvenilir, tam isim vs.) bunların
+    # üzerine yazılır.  base_meta yoksa APA verileri tek kaynaktır.
     thesis = Thesis(
         kayit_no=kayit_no,
         tez_no=tez_no,
@@ -203,13 +309,21 @@ async def get_thesis(
         abstract_en=detail["abstract_en"],
         keywords_tr=detail["keywords_tr"],
         keywords_en=detail["keywords_en"],
+        # APA'dan türetilen bibliyografik alanlar (fallback)
+        author=detail["author"],
+        year=detail["year"],
+        title_tr=detail["title"],
+        thesis_type=detail["thesis_type"],
+        thesis_no=detail["thesis_no"],
         # Erişim durumu
         access_status=status,
         access_reason=reason,
         pdf_key=pdf_key,
     )
 
-    # base_meta'dan gelen arama kartı alanlarını uygula (boş değilse)
+    # base_meta'dan gelen arama kartı alanlarını uygula (boş değilse).
+    # base_meta, yazar için tam isim ("ZEYNEP KILIÇ") taşır;
+    # APA'da kısaltılmış hali ("KILIÇ, Z.") gelir — base_meta ÖNCE GELİR.
     if base_meta is not None:
         if base_meta.thesis_no is not None:
             thesis.thesis_no = base_meta.thesis_no
