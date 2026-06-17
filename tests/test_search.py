@@ -278,15 +278,16 @@ class TestSearchKeywordPostShape:
 
 
 class TestBuildKeywordSlots:
-    def test_splits_three_terms_with_and(self):
+    # Strateji: 2-slot HALF-SPLIT. Probe kanıtı: 3-slot AND çöküyor (0), 2-slot AND
+    # daha iyi recall veriyor ("yapay zeka"+"hukuk"→16, "yapay zeka"+"ceza hukuku"→2).
+    def test_three_terms_half_split(self):
         from yoktez_mcp.search import _build_keyword_slots
 
         slots = _build_keyword_slots("yapay zeka hukuk")
-        assert slots["keyword"] == "yapay"
-        assert slots["keyword1"] == "zeka"
-        assert slots["keyword2"] == "hukuk"
+        assert slots["keyword"] == "yapay zeka"
+        assert slots["keyword1"] == "hukuk"
+        assert slots["keyword2"] == ""
         assert slots["ops_field"] == "and"
-        assert slots["ops_field1"] == "and"
 
     def test_single_term(self):
         from yoktez_mcp.search import _build_keyword_slots
@@ -304,15 +305,14 @@ class TestBuildKeywordSlots:
         assert slots["keyword1"] == "zeka"
         assert slots["keyword2"] == ""
 
-    def test_more_than_three_terms_packs_remainder_into_third(self):
+    def test_four_terms_half_split_preserves_phrases(self):
         from yoktez_mcp.search import _build_keyword_slots
 
         slots = _build_keyword_slots("yapay zeka ceza hukuku")
-        assert slots["keyword"] == "yapay"
-        assert slots["keyword1"] == "zeka"
-        assert slots["keyword2"] == "ceza hukuku"
+        assert slots["keyword"] == "yapay zeka"
+        assert slots["keyword1"] == "ceza hukuku"
+        assert slots["keyword2"] == ""
         assert slots["ops_field"] == "and"
-        assert slots["ops_field1"] == "and"
 
 
 # ---------------------------------------------------------------------------

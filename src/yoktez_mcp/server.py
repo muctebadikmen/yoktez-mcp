@@ -255,17 +255,18 @@ async def _university_listing(
         except Exception as exc:  # noqa: BLE001
             live_error = f"{type(exc).__name__}: {exc}"
 
-    # Canlı sonuçlar sunucu tarafında üniversiteye göre kapsamlanmıştır; indeks
-    # zaten üniversite-filtrelidir. Üniversite adı client-filtresi UYGULANMAZ.
+    # Filtreleme TAMAMEN sunucu/indeks tarafında: canlı islem=2 tur/yıl ile
+    # kapsamlanmış, indeks by_university tür/yıl filtresini uygulamıştır. Burada
+    # client-filtre UYGULANMAZ — büyük sayfalarda kart meta'sı (thesis_type/year)
+    # None gelebildiğinden client-filtre geçerli sonuçları yanlışlıkla eler.
     _warm_index(live_hits)
     all_hits = _dedupe_hits(live_hits + list(idx_result.hits))
-    # tür/yıl için savunmacı client-filtre (eşlenemeyen Tur kodu durumunu kapsar)
-    if thesis_type:
-        all_hits = [h for h in all_hits if _fold_contains(h.thesis_type, thesis_type)]
-    if year_from is not None:
-        all_hits = [h for h in all_hits if h.year is not None and h.year >= year_from]
-    if year_to is not None:
-        all_hits = [h for h in all_hits if h.year is not None and h.year <= year_to]
+    # Tür istendi ama bilinen Tur koduna eşlenemediyse canlı taraf tür-filtreli değildir.
+    if thesis_type and unis and _tur_code(thesis_type) == "0":
+        notes.append(
+            f"thesis_type={thesis_type!r} bilinen bir Tür koduna eşlenemedi; "
+            "canlı sonuçlar tür-filtreli olmayabilir."
+        )
     page = all_hits[:limit]
 
     live_has = bool(live_hits)

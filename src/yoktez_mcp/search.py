@@ -88,13 +88,16 @@ _ERROR_MARKER = "Geçersiz sorgulama"
 
 
 def _build_keyword_slots(query: str, op: str = "and") -> dict[str, str]:
-    """Çok-kelimeli sorguyu YÖKTEZ'in 3 boolean slotuna dağıtır.
+    """Çok-kelimeli sorguyu YÖKTEZ'in boolean slotlarına 2-slot HALF-SPLIT ile dağıtır.
 
     YÖKTEZ tek ``keyword``'ü phrase/substring olarak eşler; bütün sorgu tek slota
-    konunca kelime eklendikçe eşleşme 0'a düşer (canlı probe ile doğrulandı).
-    Doğru yol: ``keyword``/``keyword1``/``keyword2`` + ``ops_field``/``ops_field1``
-    ile gerçek AND. >3 kelime: ilk ikisi kendi slotunda, kalanı 3. slota phrase
-    olarak konur — böylece hiçbir terim sessizce düşmez.
+    konunca kelime eklendikçe eşleşme 0'a düşer (probe ile doğrulandı). Çözüm:
+    ``keyword``/``keyword1`` + ``ops_field`` ile 2-yönlü AND.
+
+    Neden 2 slot (3 değil): probe kanıtı 3-yönlü AND'in 0'a çöktüğünü, 2-yönlü AND'in
+    daha iyi recall verdiğini gösterdi — sorguyu ortadan iki yarıya bölüp her yarıyı
+    bir slota phrase olarak koymak, anlamlı kelime gruplarını ("yapay zeka", "ceza
+    hukuku") birlikte tutar: "yapay zeka hukuk"→16, "yapay zeka ceza hukuku"→2.
     """
     words = query.split()
     if len(words) <= 1:
@@ -102,13 +105,11 @@ def _build_keyword_slots(query: str, op: str = "and") -> dict[str, str]:
             "keyword": query.strip(), "keyword1": "", "keyword2": "",
             "ops_field": op, "ops_field1": op,
         }
-    if len(words) == 2:
-        return {
-            "keyword": words[0], "keyword1": words[1], "keyword2": "",
-            "ops_field": op, "ops_field1": op,
-        }
+    mid = (len(words) + 1) // 2  # tek sayıda ilk yarı bir fazla kelime alır
     return {
-        "keyword": words[0], "keyword1": words[1], "keyword2": " ".join(words[2:]),
+        "keyword": " ".join(words[:mid]),
+        "keyword1": " ".join(words[mid:]),
+        "keyword2": "",
         "ops_field": op, "ops_field1": op,
     }
 
