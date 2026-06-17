@@ -260,10 +260,11 @@ async def post_form(path: str, data: dict) -> httpx.Response:
             # Semaphore zaten elimizde — get() değil, _get_with_retry() kullan (deadlock önlemi).
             if resp.status_code == 302:
                 location = resp.headers.get("Location", "")
-                if not location.startswith("http"):
-                    # Göreceli URL → mutlak yap
-                    location = f"https://tez.yok.gov.tr{location}"
-                return await _get_with_retry(client, location)
+                # RFC-3986 çözümlemesi: mutlak, root-relative ve protocol-relative
+                # Location değerlerini doğru işler. Elle string birleştirmesi
+                # protocol-relative (//) ve bazı göreceli yollar için bozuluyordu.
+                absolute = str(resp.url.join(location))
+                return await _get_with_retry(client, absolute)
 
             resp.raise_for_status()
             return resp

@@ -119,6 +119,57 @@ async def test_post_form_headers_and_redirect_follow(fast_client):
 
 
 # ---------------------------------------------------------------------------
+# post_form: root-relative ve protocol-relative Location çözümlemesi
+# ---------------------------------------------------------------------------
+
+
+async def test_post_form_root_relative_redirect(fast_client):
+    """302 Location root-relative (/yol) olduğunda, doğru mutlak URL'e GET yapılmalı.
+
+    Eski `if not location.startswith("http")` kodu bu durumu kırıyordu çünkü
+    '/UlusalTezMerkezi/...' gibi bir yolu 'https://tez.yok.gov.tr/UlusalTezMerkezi/...'
+    olarak birleştiriyordu; resp.url.join() ise RFC-3986'ya göre origin'i korur.
+    """
+    requests_seen: list[httpx.Request] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        requests_seen.append(req)
+        if req.method == "GET" and "tarama.jsp" in str(req.url):
+            return httpx.Response(
+                200,
+                headers={"Set-Cookie": "JSESSIONID=TESTID; Path=/"},
+                text="tarama",
+            )
+        if req.method == "POST":
+            # Root-relative Location — no host, starts with '/'
+            return httpx.Response(
+                302,
+                headers={"Location": "/UlusalTezMerkezi/tezSorguSonucYeni.jsp"},
+            )
+        # Redirect GET — must land on the correct absolute URL
+        return httpx.Response(200, text="redirect-sonuc")
+
+    _install_transport(handler)
+
+    resp = await http.post_form("SearchTez", {"Tur": "1", "islem": "4"})
+
+    assert resp.status_code == 200
+    assert "redirect-sonuc" in resp.text
+
+    # The redirect GET must have been made to the fully-resolved absolute URL.
+    redirect_get = next(
+        (r for r in requests_seen if r.method == "GET" and "tezSorguSonucYeni" in str(r.url)),
+        None,
+    )
+    assert redirect_get is not None, "Redirect GET isteği bulunamadı"
+    resolved = str(redirect_get.url)
+    assert resolved.startswith("https://tez.yok.gov.tr"), (
+        f"Redirect URL beklenen host'ta değil: {resolved}"
+    )
+    assert "/UlusalTezMerkezi/tezSorguSonucYeni.jsp" in resolved
+
+
+# ---------------------------------------------------------------------------
 # ensure_session: idempotent — cookie varsa tarama.jsp'ye gitme
 # ---------------------------------------------------------------------------
 
@@ -163,6 +214,34 @@ async def test_ensure_session_noop_when_cookie_present(fast_client):
     await http.ensure_session()
 
     assert tarama_calls["n"] == 0, "Cookie varken tarama.jsp çekilmemeli"
+
+
+async def test_ensure_session_noop_when_cookie_present_but_flag_false(fast_client):
+    """_session_seeded=False olsa bile cookie jar'da JSESSIONID varsa
+    tarama.jsp HİÇ çekilmemeli (sadece flag set edilmeli).
+
+    Bu, process restart sonrası cookie'nin başka yoldan enjekte edildiği
+    durumu kapsar — ensure_session() gereksiz yere tarama.jsp çekmemeli.
+    """
+    tarama_calls = {"n": 0}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if "tarama.jsp" in str(req.url):
+            tarama_calls["n"] += 1
+        return httpx.Response(200, text="ok")
+
+    _install_transport(handler)
+
+    # Cookie mevcut ama flag henüz False
+    http._client.cookies.set("JSESSIONID", "INJECTED_ID", domain="tez.yok.gov.tr")
+    assert http._session_seeded is False  # pre-condition
+
+    await http.ensure_session()
+
+    assert tarama_calls["n"] == 0, (
+        "_session_seeded=False iken mevcut JSESSIONID varsa tarama.jsp çekilmemeli"
+    )
+    assert http._session_seeded is True, "ensure_session() flag'i True yapmalıydı"
 
 
 # ---------------------------------------------------------------------------
