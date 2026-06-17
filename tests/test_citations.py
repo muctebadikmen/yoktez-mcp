@@ -64,10 +64,30 @@ def sanatta_yeterlik_data() -> CitationData:
 # from_thesis helper
 # ---------------------------------------------------------------------------
 
+def test_from_thesis_uses_human_thesis_no_not_opaque_key():
+    """Regression: from_thesis must map thesis_no (human Tez No), not tez_no (opaque key)."""
+    t = Thesis(
+        kayit_no="k",
+        tez_no="OPAQUE_KEY_XYZ",
+        thesis_no="1009908",
+        author="Zeynep Kılıç",
+        year=2026,
+        title_tr="Test",
+        thesis_type="Yüksek Lisans",
+        university="Fırat Üniversitesi",
+    )
+    d = from_thesis(t)
+    apa = citations.format_apa(d)
+    assert "1009908" in apa, "APA must contain the human Tez No"
+    assert "OPAQUE_KEY_XYZ" not in apa, "APA must never expose the opaque key"
+    assert d.thesis_no == "1009908"
+
+
 def test_from_thesis_maps_correctly():
     t = Thesis(
         kayit_no="12345",
-        tez_no="1009908",
+        tez_no="OPAQUE_ENCRYPTED_KEY",
+        thesis_no="1009908",
         author="Zeynep Kılıç",
         year=2026,
         title_tr="Makine öğrenmesi algoritmaları ile Bitcoin fiyat tahmini",
@@ -81,7 +101,7 @@ def test_from_thesis_maps_correctly():
     assert d.title == "Makine öğrenmesi algoritmaları ile Bitcoin fiyat tahmini"
     assert d.thesis_type == "Yüksek Lisans"
     assert d.university == "Fırat Üniversitesi"
-    assert d.thesis_no == "1009908"
+    assert d.thesis_no == "1009908"  # human Tez No, not the opaque key
     assert d.language == "Türkçe"
 
 

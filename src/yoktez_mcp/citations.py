@@ -578,7 +578,7 @@ def from_thesis(thesis: Thesis) -> CitationData:
         title=title,
         thesis_type=thesis.thesis_type,
         university=thesis.university,
-        thesis_no=thesis.tez_no,
+        thesis_no=thesis.thesis_no,
         url=url,
         language=thesis.language,
     )
