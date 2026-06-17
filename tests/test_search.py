@@ -192,7 +192,10 @@ class TestSearchKeywordPostShape:
         assert captured["nevi"] == "1"
         assert captured["tip"] == "2"
         assert captured["islem"] == "4"
-        assert captured["keyword"] == "yapay zeka"
+        # Çok-kelime artık boolean slotlara bölünür (gerçek AND).
+        assert captured["keyword"] == "yapay"
+        assert captured["keyword1"] == "zeka"
+        assert captured["ops_field"] == "and"
         # izin/Tur/yil must NOT be present
         assert "izin" not in captured
         assert "Tur" not in captured
@@ -245,6 +248,49 @@ class TestSearchKeywordPostShape:
 
         assert len(result.hits) >= 5
         assert result.source == "live"
+
+
+# ---------------------------------------------------------------------------
+# _build_keyword_slots — multi-word AND across YÖKTEZ boolean slots
+# ---------------------------------------------------------------------------
+
+
+class TestBuildKeywordSlots:
+    def test_splits_three_terms_with_and(self):
+        from yoktez_mcp.search import _build_keyword_slots
+
+        slots = _build_keyword_slots("yapay zeka hukuk")
+        assert slots["keyword"] == "yapay"
+        assert slots["keyword1"] == "zeka"
+        assert slots["keyword2"] == "hukuk"
+        assert slots["ops_field"] == "and"
+        assert slots["ops_field1"] == "and"
+
+    def test_single_term(self):
+        from yoktez_mcp.search import _build_keyword_slots
+
+        slots = _build_keyword_slots("yapay")
+        assert slots["keyword"] == "yapay"
+        assert slots["keyword1"] == ""
+        assert slots["keyword2"] == ""
+
+    def test_two_terms(self):
+        from yoktez_mcp.search import _build_keyword_slots
+
+        slots = _build_keyword_slots("yapay zeka")
+        assert slots["keyword"] == "yapay"
+        assert slots["keyword1"] == "zeka"
+        assert slots["keyword2"] == ""
+
+    def test_more_than_three_terms_packs_remainder_into_third(self):
+        from yoktez_mcp.search import _build_keyword_slots
+
+        slots = _build_keyword_slots("yapay zeka ceza hukuku")
+        assert slots["keyword"] == "yapay"
+        assert slots["keyword1"] == "zeka"
+        assert slots["keyword2"] == "ceza hukuku"
+        assert slots["ops_field"] == "and"
+        assert slots["ops_field1"] == "and"
 
 
 # ---------------------------------------------------------------------------

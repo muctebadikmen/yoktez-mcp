@@ -47,6 +47,37 @@ _ERROR_MARKER = "Geçersiz sorgulama"
 
 
 # ---------------------------------------------------------------------------
+# Çok-kelimeli sorgu → YÖKTEZ boolean slotları
+# ---------------------------------------------------------------------------
+
+
+def _build_keyword_slots(query: str, op: str = "and") -> dict[str, str]:
+    """Çok-kelimeli sorguyu YÖKTEZ'in 3 boolean slotuna dağıtır.
+
+    YÖKTEZ tek ``keyword``'ü phrase/substring olarak eşler; bütün sorgu tek slota
+    konunca kelime eklendikçe eşleşme 0'a düşer (canlı probe ile doğrulandı).
+    Doğru yol: ``keyword``/``keyword1``/``keyword2`` + ``ops_field``/``ops_field1``
+    ile gerçek AND. >3 kelime: ilk ikisi kendi slotunda, kalanı 3. slota phrase
+    olarak konur — böylece hiçbir terim sessizce düşmez.
+    """
+    words = query.split()
+    if len(words) <= 1:
+        return {
+            "keyword": query.strip(), "keyword1": "", "keyword2": "",
+            "ops_field": op, "ops_field1": op,
+        }
+    if len(words) == 2:
+        return {
+            "keyword": words[0], "keyword1": words[1], "keyword2": "",
+            "ops_field": op, "ops_field1": op,
+        }
+    return {
+        "keyword": words[0], "keyword1": words[1], "keyword2": " ".join(words[2:]),
+        "ops_field": op, "ops_field1": op,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Özel istisna
 # ---------------------------------------------------------------------------
 
@@ -292,12 +323,9 @@ async def search_keyword(
         )
 
     # Doğrulanmış minimal islem=4 POST — izin/Tur/yıl EKLENMEMELİ.
+    # Çok-kelimeli sorgu boolean slotlara bölünür (gerçek AND); tek kelime tek slot.
     data = {
-        "keyword": query,
-        "keyword1": "",
-        "keyword2": "",
-        "ops_field": "and",
-        "ops_field1": "and",
+        **_build_keyword_slots(query),
         "nevi": nevi,
         "tip": tip,
         "islem": "4",
