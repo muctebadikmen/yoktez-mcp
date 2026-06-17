@@ -294,6 +294,50 @@ class TestBuildKeywordSlots:
 
 
 # ---------------------------------------------------------------------------
+# _build_advanced_body — islem=2 gelişmiş/filtreli arama POST gövdesi
+# ---------------------------------------------------------------------------
+
+
+class TestBuildAdvancedBody:
+    def test_defaults_are_zero_and_durum_3(self):
+        from yoktez_mcp.search import _build_advanced_body
+
+        body = _build_advanced_body(tur="2", year_from="2023", year_to="2023")
+        assert body["islem"] == "2"
+        assert body["Durum"] == "3"
+        assert body["source"] == "TR"
+        assert body["Enstitu"] == "0"
+        assert body["ABD"] == "0"
+        assert body["Dil"] == "0"
+        assert body["izin"] == "0"
+        assert body["Bolum"] == "0"
+        assert body["Tur"] == "2"
+        assert body["yil1"] == "2023"
+        assert body["yil2"] == "2023"
+        assert body["-find"].strip() == "Bul"
+
+    def test_university_scope_sets_kod_and_yoksis(self):
+        from yoktez_mcp.search import _build_advanced_body
+
+        body = _build_advanced_body(
+            university_kod="ENC", university_yoksis="YID",
+            university_name="İSTANBUL ÜNİVERSİTESİ",
+        )
+        assert body["Universite"] == "ENC"
+        assert body["uni_yoksis_id"] == "YID"
+        assert body["uniad"] == "İSTANBUL ÜNİVERSİTESİ"
+
+    def test_text_filters_default_empty(self):
+        from yoktez_mcp.search import _build_advanced_body
+
+        body = _build_advanced_body()
+        assert body["TezAd"] == ""
+        assert body["AdSoyad"] == ""
+        assert body["DanismanAdSoyad"] == ""
+        assert body["Universite"] == ""
+
+
+# ---------------------------------------------------------------------------
 # normalize_person_name — advisor/author name → "Ad Soyad"
 # ---------------------------------------------------------------------------
 
@@ -342,3 +386,41 @@ async def test_live_search_keyword_yapay_zeka():
     assert len(result.hits) > 0
     for hit in result.hits:
         assert hit.kayit_no, "kayit_no must not be empty"
+
+
+@pytest.mark.live
+@pytest.mark.asyncio
+async def test_live_multi_word_and_returns_hits():
+    """Live: 'yapay zeka hukuk' artık boolean slotlarla >0 sonuç döndürür."""
+    result = await search_keyword("yapay zeka hukuk", field="all")
+    assert len(result.hits) > 0
+
+
+@pytest.mark.live
+@pytest.mark.asyncio
+async def test_live_advanced_university_scope():
+    """Live: islem=2 üniversite kapsamı doğru üniversiteye filtreler."""
+    from yoktez_mcp import facets, search
+
+    uni = facets.find_university("İstanbul Üniversitesi")[0]
+    res = await search.search_advanced(
+        university_kod=uni["kod"], university_yoksis=uni["yoksis_id"],
+        university_name=uni["name"], tur="2", year_from="2023", year_to="2023",
+    )
+    assert res.hits
+    assert all(
+        "İSTANBUL ÜNİVERSİTESİ" in (h.university or "").upper() for h in res.hits[:10]
+    )
+
+
+@pytest.mark.live
+@pytest.mark.asyncio
+async def test_live_advisor_normalized_returns_known_thesis():
+    """Live: bilinen danışman (Türkçe karakterli) 'Ad Soyad' ile sonuç döndürür."""
+    from yoktez_mcp.search import normalize_person_name
+
+    res = await search_keyword(
+        normalize_person_name("Doç. Dr. Aslı Deniz Helvacıoğlu"),
+        field="advisor", match="contains",
+    )
+    assert len(res.hits) > 0

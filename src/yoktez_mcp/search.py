@@ -366,3 +366,81 @@ async def search_keyword(
     resp = await post_form("SearchTez", data)
     html = resp.text
     return parse_results(html)
+
+
+# ---------------------------------------------------------------------------
+# islem=2 — gelişmiş/filtreli arama (üniversite/tür/yıl/dil/izin + metin filtreleri)
+# ---------------------------------------------------------------------------
+
+
+def _build_advanced_body(
+    *,
+    university_kod: str = "",
+    university_yoksis: str = "",
+    university_name: str = "",
+    tur: str = "0",
+    year_from: str = "0",
+    year_to: str = "0",
+    dil: str = "0",
+    izin: str = "0",
+    durum: str = "3",
+    title: str = "",
+    author: str = "",
+    advisor: str = "",
+    subject: str = "",
+) -> dict:
+    """islem=2 (gelişmiş/filtreli arama) POST gövdesini kurar.
+
+    Canlı probe ile doğrulandı (FINDINGS §2 addendum): boş facet kodları ``"0"``,
+    boş metin alanları ``""`` gönderilmeli — aksi halde "Geçersiz sorgulama" /
+    "Hata Oluştu". Üniversite kapsamı için şifreli ``Universite`` kod + ``uni_yoksis_id``
+    birlikte gönderilir. ``Durum="3"`` (onaylandı), ``source="TR"``, submit ``-find``.
+    """
+    return {
+        "uniad": university_name,
+        "Universite": university_kod,
+        "uni_yoksis_id": university_yoksis,
+        "source": "TR",
+        "ensad": "", "Enstitu": "0",
+        "abdad": "", "ABD": "0",
+        "Konu": subject,
+        "Tur": tur, "yil1": year_from, "yil2": year_to,
+        "izin": izin, "Durum": durum, "Dil": dil,
+        "TezAd": title, "AdSoyad": author, "DanismanAdSoyad": advisor,
+        "Dizin": "", "TezNo": "", "Metin": "", "Bolum": "0",
+        "islem": "2", "-find": "  Bul",
+    }
+
+
+async def search_advanced(
+    *,
+    university_kod: str = "",
+    university_yoksis: str = "",
+    university_name: str = "",
+    tur: str = "0",
+    year_from: str = "0",
+    year_to: str = "0",
+    dil: str = "0",
+    izin: str = "0",
+    durum: str = "3",
+    title: str = "",
+    author: str = "",
+    advisor: str = "",
+    subject: str = "",
+) -> SearchResult:
+    """YÖKTEZ islem=2 gelişmiş/filtreli arama yapar (sunucu-taraflı filtreleme).
+
+    Üniversite/tür/yıl/dil/izin facet'leri + başlık/yazar/danışman/konu metin
+    filtrelerini sunucuya iletir. Sonuç sayfası islem=4 ile aynı yapıda olduğundan
+    ``parse_results`` ile parse edilir. ``SearchError`` → "Geçersiz sorgulama".
+    """
+    body = _build_advanced_body(
+        university_kod=university_kod,
+        university_yoksis=university_yoksis,
+        university_name=university_name,
+        tur=tur, year_from=year_from, year_to=year_to,
+        dil=dil, izin=izin, durum=durum,
+        title=title, author=author, advisor=advisor, subject=subject,
+    )
+    resp = await post_form("SearchTez", body)
+    return parse_results(resp.text)
