@@ -77,6 +77,10 @@ def _extract_reference_data(html: str) -> dict:
     """Sayfa içindeki ``referenceData = {...};`` JS bloğunu parse eder.
 
     Bulunamazsa ya da parse edilemezse boş dict döner — savunmacı.
+
+    Gerçek YÖKTEZ sayfasında nesne ~1 MB olabilir ve son kayıttan sonra
+    sürüklenen bir virgül içerir (valid JS, invalid JSON).  Bunu minimal
+    şekilde normalleştirip json.loads'a veriyoruz.
     """
     # JS sayfasında: `const referenceData = { ... };`
     # Blok büyük olabilir; re.DOTALL ile tüm sayfaya bakıyoruz.
@@ -87,8 +91,15 @@ def _extract_reference_data(html: str) -> dict:
     )
     if not match:
         return {}
+    raw = match.group(1)
+
+    # Live sayfada son girişten sonra trailing comma gelir (valid JS, invalid JSON).
+    # Örnek son kısım: '           },\n        \n    }'
+    # Sadece kapanış } öncesindeki virgül(ler)i kaldır — minimal normalleştirme.
+    normalized = re.sub(r",(\s*\n\s*\})\s*$", r"\1", raw)
+
     try:
-        return json.loads(match.group(1))
+        return json.loads(normalized)
     except json.JSONDecodeError:
         return {}
 

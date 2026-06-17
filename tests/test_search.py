@@ -96,6 +96,19 @@ class TestParseResultsIslem4:
         assert hit0.tez_no is not None
         assert hit0.tez_no == "LMwGw7OVrLZmxj8ZiPn0BQ"
 
+    def test_hits_have_author_year_university(self):
+        """Regression: live referenceData has trailing comma (valid JS, invalid JSON).
+        The extractor must normalize it so metadata is not silently lost."""
+        result = parse_results(self.HTML)
+        # At least one hit must have all three fields populated.
+        hits_with_meta = [
+            h for h in result.hits
+            if h.author is not None and h.year is not None and h.university is not None
+        ]
+        assert len(hits_with_meta) >= 1, (
+            "No hit has author+year+university — referenceData trailing-comma bug likely regressed"
+        )
+
 
 # ---------------------------------------------------------------------------
 # parse_results — results_empty.html (no cards, 0 results)
