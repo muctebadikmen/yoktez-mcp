@@ -168,8 +168,9 @@ Bir teze bu **iki anahtarla** erişilir. Bunlar arama sonucu kartlarından gelen
 
 Bu projenin omurgası dürüstlüktür; mevcut sürümün gerçek sınırları:
 
-- **Gelişmiş filtreli *canlı* arama henüz yok (`islem=2`).** YÖK'ün gelişmiş arama formu (tür/yıl/üniversite/ABD filtreleri) sunucu tarafında programatik POST'a kapalıdır (tarayıcıya özel JS gerektirir; düz istek "Hata Oluştu" döndürür). Şu an bu filtreler **yerel indeks + canlı keyword sonuçları üzerinde** uygulanır. *(Yol haritası: gerçek tarayıcı POST'unun yakalanmasıyla çözülecek.)*
-- **Sıcak çapraz-tez indeksi henüz hasat edilmedi.** Pakete gömülü seed indeksi şu an **boş bir placeholder**'dır; bu yüzden arama şu an **canlı keyword** üzerinden çalışır ve YÖK'ün **2000 sonuç/sorgu** sınırına tabidir (kapsam dürüstçe bildirilir). *(Yol haritası: tür×yıl×ABD dilimleriyle nazik hasat → `data/seed_index.db.gz`.)*
+- **Tam metin sadece YÖK'ün 2000 sonuç/sorgu sınırına kadar.** Canlı bir sorgu bu sınıra takılırsa `coverage_complete=false` dürüstçe bildirilir; yıl/tür ile daraltmak gerekir. (Seed indeksi bu sınırı dilimleyerek aşar — aşağıya bakın.)
+- **Seed indeksi seçili kapsamda hasat edilmiştir (tüm YÖKTEZ değil).** Pakete gömülü `data/seed_index.db.gz` şu an **6 büyük üniversite × Doktora × 2018–2025** dilimini içerir (~19 bin tez); bu kapsam dışındaki tezler **canlı** sorgulanır (ve indeks kullanımla ısınır). Kapsam genişletmek için `scripts/build_index.py --turler 1,2 --years 2010-2025` çalıştırılabilir (nazik, resume-edilebilir).
+- **Danışman indeksi yoktur — danışman keşfi canlıdır.** Arama sonuç kartları danışman bilgisi taşımadığından seed indeksinde `advisor` alanı boştur; `find_advisor_theses` bu yüzden **canlı `nevi=3`** üzerinden çalışır (ekol/soy-ağacı analizi için birincil yol).
 - **OCR yoktur.** Taranmış/bozuk-font PDF'lerde metin fiziksel olarak çıkarılamaz; ücretsiz, anahtarsız, sürtünmesiz bir OCR yolu olmadığından kapsam dışıdır. Bu belgeler **`text_reliable=false`** ile işaretlenir.
 - **İzinsiz tezlerin tam metni yoktur.** Yazar yayın izni vermemişse PDF erişilemez; içerik uydurulmaz, YÖK'ün gerekçe metni döndürülür. (Basılı kopyalar üniversite kütüphaneleri üzerinden TÜBESS ile temin edilebilir.)
 
@@ -212,7 +213,7 @@ search.py     detail.py      pdf.py          index.py      facets.py   citations
    └───────────────┴────────  cache.py (bellek+disk) · http.py (oturum, throttle, 429 backoff) · text.py (tr_fold)
 ```
 
-Hibrit mimari: **canlı `SearchTez`** kazıma + **yerel FTS5 indeksi**. Pakete gömülü, gzip'li bir seed indeksi (`data/seed_index.db.gz`) açılışta yüklenir; *hasat tamamlandığında* çapraz-tez aramasını **sıcak** başlatacaktır (şu an boş placeholder — bkz. Dürüst sınırlamalar).
+Hibrit mimari: **canlı `SearchTez`** kazıma (keyword `islem=4` + filtreli `islem=2`) + **yerel FTS5 indeksi**. Pakete gömülü, gzip'li seed indeksi (`data/seed_index.db.gz`, ~19 bin tez) açılışta yüklenerek çapraz-tez aramasını **sıcak** başlatır; ayrıca her canlı aramadan dönen sonuçlar indekse yazılarak (on-demand warming) kapsam kullanımla genişler.
 
 ---
 
