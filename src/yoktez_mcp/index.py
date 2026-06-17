@@ -213,6 +213,36 @@ class SearchIndex:
             )
         c.commit()
 
+    # ----------------------------------------------------------- upsert_hits --
+
+    def upsert_hits(self, hits: list[SearchHit]) -> int:
+        """SearchHit (hafif arama kartı) satırlarını indekse upsert eder.
+
+        On-demand warming için: canlı aramadan dönen kartlar indekse yazılır,
+        böylece indeks kullanımla ısınır. Yalnızca kartta bulunan alanlar
+        (title/author/year/university/thesis_type) yazılır; abstract/keywords/
+        advisor boş kalır. ``kayit_no``'ya göre dedup-güvenli (upsert).
+        ``kayit_no``'su olan satır sayısını döndürür.
+        """
+        theses = [
+            Thesis(
+                kayit_no=h.kayit_no,
+                tez_no=h.tez_no or "",
+                thesis_no=h.thesis_no,
+                title_tr=h.title_tr,
+                title_en=h.title_en,
+                author=h.author,
+                year=h.year,
+                university=h.university,
+                thesis_type=h.thesis_type,
+            )
+            for h in hits
+            if h.kayit_no
+        ]
+        if theses:
+            self.upsert(theses)
+        return len(theses)
+
     # ---------------------------------------------------------------- search --
 
     def search(

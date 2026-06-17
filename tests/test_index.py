@@ -516,3 +516,41 @@ def test_get_default_index_existing_cache_not_overwritten(tmp_path, monkeypatch)
         if idx_mod._default_index is not None:
             idx_mod._default_index.close()
         idx_mod._default_index = None
+
+
+# ---------------------------------------------------------------------------
+# upsert_hits — on-demand warming (SearchHit → index)
+# ---------------------------------------------------------------------------
+
+
+def test_upsert_hits_indexes_searchhit_and_is_dedup_safe():
+    ix = SearchIndex(":memory:")
+    hit = SearchHit(
+        kayit_no="h1", tez_no="t1", thesis_no="900",
+        title_tr="Yapay zeka ile hukuk", title_en=None, author="A B",
+        year=2023, university="X ÜNİVERSİTESİ", thesis_type="Doktora",
+    )
+    n = ix.upsert_hits([hit])
+    assert n == 1
+    res = ix.search("yapay zeka")
+    assert any(h.kayit_no == "h1" for h in res.hits)
+    # idempotent: aynı hit ikinci kez → duplikasyon yok
+    ix.upsert_hits([hit])
+    res2 = ix.search("yapay zeka")
+    assert sum(1 for h in res2.hits if h.kayit_no == "h1") == 1
+
+
+def test_upsert_hits_handles_none_tez_no():
+    ix = SearchIndex(":memory:")
+    hit = SearchHit(kayit_no="h2", tez_no=None, title_tr="Makine öğrenmesi")
+    n = ix.upsert_hits([hit])
+    assert n == 1
+    res = ix.search("makine")
+    assert any(h.kayit_no == "h2" for h in res.hits)
+
+
+def test_upsert_hits_skips_rows_without_kayit_no():
+    ix = SearchIndex(":memory:")
+    hit = SearchHit(kayit_no="", tez_no="t", title_tr="Geçersiz")
+    n = ix.upsert_hits([hit])
+    assert n == 0

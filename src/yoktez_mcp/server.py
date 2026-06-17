@@ -174,6 +174,20 @@ def _dedupe_hits(hits: list) -> list:
     return out
 
 
+def _warm_index(hits: list) -> None:
+    """Canlı sonuçları yerel indekse en-iyi-çaba ile yazar (on-demand warming).
+
+    Aramaya ASLA hata fırlatmaz — indeks ısınması bir yan etkidir, asıl yanıtı
+    bloke etmez. Böylece indeks, MCP kullanıldıkça canlı sonuçlardan ısınır.
+    """
+    if not hits:
+        return
+    try:
+        index.get_default_index().upsert_hits(hits)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _tur_code(label: str | None) -> str:
     """Tez türü etiketini ('Doktora') islem=2 Tur koduna ('2') çevirir; bilinmezse '0'."""
     if not label:
@@ -243,6 +257,7 @@ async def _university_listing(
 
     # Canlı sonuçlar sunucu tarafında üniversiteye göre kapsamlanmıştır; indeks
     # zaten üniversite-filtrelidir. Üniversite adı client-filtresi UYGULANMAZ.
+    _warm_index(live_hits)
     all_hits = _dedupe_hits(live_hits + list(idx_result.hits))
     # tür/yıl için savunmacı client-filtre (eşlenemeyen Tur kodu durumunu kapsar)
     if thesis_type:
@@ -380,6 +395,9 @@ async def search_theses(
         else []
     )
     dropped_noise = len(live_raw) - len(live_hits)
+
+    # On-demand warming: alaka-süzülmüş canlı sonuçları indekse yaz (en-iyi-çaba).
+    _warm_index(live_hits)
 
     # 4. Birleştir + tekilleştir (index önce, alaka-sıralı canlı sonra)
     all_hits = _dedupe_hits(list(index_result.hits) + live_hits)
@@ -627,6 +645,7 @@ async def find_advisor_theses(advisor: str, limit: int = 20) -> dict:
     idx = index.get_default_index()
     idx_result = idx.by_advisor(advisor, limit=limit * 2)
 
+    _warm_index(live_hits)
     all_hits = _dedupe_hits(idx_result.hits + live_hits)
     page = all_hits[:limit]
 
@@ -682,6 +701,7 @@ async def find_author_theses(author: str, limit: int = 20) -> dict:
     idx = index.get_default_index()
     idx_result = idx.by_author(author, limit=limit * 2)
 
+    _warm_index(live_hits)
     all_hits = _dedupe_hits(idx_result.hits + live_hits)
     page = all_hits[:limit]
 
@@ -961,6 +981,7 @@ async def _resolve_advisor(name: str, limit: int = 20) -> dict:
     idx = index.get_default_index()
     idx_result = idx.by_advisor(name, limit=limit * 2)
 
+    _warm_index(live_hits)
     all_hits = _dedupe_hits(idx_result.hits + live_hits)
     page = all_hits[:limit]
 

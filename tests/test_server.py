@@ -177,6 +177,9 @@ class _EmptyIndex:
             coverage_complete=True, source="index", notes=[]
         )
 
+    def upsert_hits(self, hits):
+        return len(hits)
+
 
 class _IndexWithHits:
     """Sabit hit listesi döndüren mock."""
@@ -223,6 +226,9 @@ class _IndexWithHits:
             shown=len(self._hits),
             coverage_complete=True, source="index", notes=[]
         )
+
+    def upsert_hits(self, hits):
+        return len(hits)
 
 
 # ---------------------------------------------------------------------------
@@ -340,6 +346,31 @@ async def test_search_theses_source_hybrid(monkeypatch):
     # 'makine' canlı hit (_HIT_2 'Makine Öğrenmesi') başlığında geçer → alaka filtresinden geçer.
     result = await srv.search_theses("makine")
     assert result["source"] == "hybrid"
+
+
+@pytest.mark.asyncio
+async def test_search_theses_warms_index_with_live_hits(monkeypatch):
+    """Canlı sonuçlar yerel indekse on-demand olarak yazılmalı (upsert_hits)."""
+
+    class RecordingIndex(_EmptyIndex):
+        def __init__(self):
+            self.warmed = []
+
+        def upsert_hits(self, hits):
+            self.warmed.extend(hits)
+            return len(hits)
+
+    rec = RecordingIndex()
+    monkeypatch.setattr(_index_mod, "get_default_index", lambda: rec)
+    monkeypatch.setattr(_search_mod, "search_keyword",
+                        lambda *a, **kw: _async_return(SearchResult(
+                            hits=[_HIT_1], total_found=1, shown=1,
+                            coverage_complete=True, source="live", notes=[]
+                        )))
+
+    srv = _import_server()
+    await srv.search_theses("yapay zeka")
+    assert any(getattr(h, "kayit_no", None) == "111" for h in rec.warmed)
 
 
 @pytest.mark.asyncio
