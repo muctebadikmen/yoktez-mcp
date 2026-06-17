@@ -26,11 +26,21 @@ def _hit_text(h) -> str:
     return tr_fold(" ".join(p for p in parts if p))
 
 
-def relevance_filter_sort(hits: list, query: str, *, require_all_terms: bool = True) -> list:
+def relevance_filter_sort(
+    hits: list,
+    query: str,
+    *,
+    require_all_terms: bool = True,
+    min_terms: int | None = None,
+) -> list:
     """Canlı hit'leri sorgu-alaka düzeyine göre filtreler ve sıralar.
 
     - ``require_all_terms=True``: tüm sorgu terimleri title/author/advisor metninde
-      geçmeyen hit'ler elenir (özet-yalnızca eşleşmeleri ayıklar).
+      geçmeyen hit'ler elenir (özet-yalnızca eşleşmeleri ayıklar) — kesin alan
+      aramaları için (title/author/advisor).
+    - ``require_all_terms=False`` + ``min_terms=1``: yalnızca hiç sorgu terimi
+      içermeyen gürültü elenir, kısmi eşleşmeler korunur (recall'ü korur) — geniş
+      ("all") aramalar için önerilir.
     - Sıralama: terim kapsamı (azalan) → başlık kapsamı → yıl (azalan).
     - Sorgu yalnızca stopword ise hiçbir şey filtrelenmez (orijinal liste).
     """
@@ -38,13 +48,15 @@ def relevance_filter_sort(hits: list, query: str, *, require_all_terms: bool = T
     if not terms:
         return list(hits)
 
+    effective_min = len(terms) if require_all_terms else (min_terms or 0)
+
     def coverage(h) -> int:
         text = _hit_text(h)
         return sum(1 for t in terms if t in text)
 
     scored = [(h, coverage(h)) for h in hits]
-    if require_all_terms:
-        scored = [(h, c) for (h, c) in scored if c == len(terms)]
+    if effective_min > 0:
+        scored = [(h, c) for (h, c) in scored if c >= effective_min]
 
     def sort_key(item):
         h, c = item

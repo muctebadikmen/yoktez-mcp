@@ -58,3 +58,17 @@ def test_matches_terms_in_author_field():
     hits = [_hit("Bir tez", kayit="a", author="Zeynep Kılıç")]
     out = relevance_filter_sort(hits, "Zeynep Kılıç")
     assert [h.kayit_no for h in out] == ["a"]
+
+
+def test_min_terms_drops_only_zero_coverage_keeps_partial():
+    """min_terms=1: hiç terim içermeyen gürültü elenir, kısmi eşleşme korunur."""
+    from yoktez_mcp.relevance import relevance_filter_sort
+
+    hits = [
+        _hit("Yapay zeka düzenlemeleri", kayit="partial"),  # 2/3 terim
+        _hit("Din eğitimi açısından anlatı", kayit="noise"),  # 0/3 terim
+    ]
+    out = relevance_filter_sort(hits, "yapay zeka tıp", require_all_terms=False, min_terms=1)
+    kayits = [h.kayit_no for h in out]
+    assert "partial" in kayits
+    assert "noise" not in kayits

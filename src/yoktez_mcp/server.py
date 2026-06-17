@@ -27,7 +27,7 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from . import citations, detail, facets, index, pdf, prompts, search
+from . import citations, detail, facets, index, pdf, prompts, relevance, search
 from .models import AccessStatus, Thesis
 from .text import tr_fold
 
@@ -365,13 +365,26 @@ async def search_theses(
     except Exception as exc:
         live_error = f"Canlı arama hatası: {type(exc).__name__}"
 
-    # 3. Birleştir + tekilleştir (index önce, live sonra → index öncelikli)
-    all_hits = list(index_result.hits)
-    if live_result:
-        all_hits = all_hits + live_result.hits
-    all_hits = _dedupe_hits(all_hits)
+    # 3. Canlı sonuçları sorgu-alaka düzeyine göre süz/sırala (gürültü ayıkla).
+    #    Geniş alanlarda ("all"/"abstract") sunucu, özet/dizin alanındaki rastgele
+    #    eşleşmeleri de döndürür → başlık/yazar/danışmanda hiç sorgu terimi geçmeyen
+    #    sonuçlar elenir. Alan-bazlı aramalarda (title/author/...) yalnızca yeniden
+    #    sıralanır (recall korunur). İndeks sonuçları zaten FTS-eşleşmeli; süzülmez.
+    live_raw = list(live_result.hits) if live_result else []
+    drop_noise = field in ("all", "abstract")
+    live_hits = (
+        relevance.relevance_filter_sort(
+            live_raw, query, require_all_terms=False, min_terms=1 if drop_noise else 0
+        )
+        if live_raw
+        else []
+    )
+    dropped_noise = len(live_raw) - len(live_hits)
 
-    # 4. Client-side filtreler (indeks SearchResult zaten filtreli, canlı sonuç için uygula)
+    # 4. Birleştir + tekilleştir (index önce, alaka-sıralı canlı sonra)
+    all_hits = _dedupe_hits(list(index_result.hits) + live_hits)
+
+    # 5. Client-side filtreler (indeks SearchResult zaten filtreli, canlı sonuç için uygula)
     filtered_hits, filters_used = _apply_client_filters(
         all_hits,
         thesis_type=thesis_type,
@@ -390,8 +403,8 @@ async def search_theses(
     # Limit uygula
     page = filtered_hits[:limit]
 
-    # 5. Kaynak bildir — yalnızca gerçekten katkıda bulunan kaynaklar sayılır
-    live_has = bool(live_result and live_result.hits)
+    # 6. Kaynak bildir — yalnızca GÖSTERİLEN sonuçlara katkı veren backend'ler
+    live_has = bool(live_hits)
     index_has = bool(index_result and index_result.hits)
     if live_has and index_has:
         source = "hybrid"
@@ -420,11 +433,18 @@ async def search_theses(
             f"YÖKTEZ canlı sonuçları 2000-cap ile sınırlı: {live_shown}/{live_total} gösteriliyor "
             "(coverage_complete=false). Filtreler yalnızca bu 2000 sonuç üzerinde uygulandı."
         )
+    if dropped_noise > 0:
+        notes.append(
+            f"Canlı sonuçlar sorgu-alaka düzeyine göre yeniden sıralandı; başlık/yazar/"
+            f"danışmanda hiç sorgu terimi geçmeyen {dropped_noise} sonuç (özet-yalnızca "
+            "eşleşme) elendi."
+        )
     # Filtre notu yalnızca canlı hit mevcutsa eklenir; indeks zaten sunucu tarafında filtrelenmiştir.
     if filters_used and live_has:
         notes.append(
-            "Filtreler (tür/yıl/üniversite) canlı dönen set üzerinde client-side uygulandı "
-            "— islem=2 (sunucu filtreli arama) şu an kullanılamıyor."
+            "Filtreler (tür/yıl/üniversite) bu araçta canlı dönen set üzerinde client-side "
+            "uygulanır. Sunucu-taraflı (islem=2) üniversite kapsamı için "
+            "list_university_theses kullanın."
         )
     if department:
         notes.append(

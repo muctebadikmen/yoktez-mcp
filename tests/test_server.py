@@ -337,8 +337,36 @@ async def test_search_theses_source_hybrid(monkeypatch):
                         lambda: _IndexWithHits([_HIT_1]))
 
     srv = _import_server()
-    result = await srv.search_theses("zeka")
+    # 'makine' canlı hit (_HIT_2 'Makine Öğrenmesi') başlığında geçer → alaka filtresinden geçer.
+    result = await srv.search_theses("makine")
     assert result["source"] == "hybrid"
+
+
+@pytest.mark.asyncio
+async def test_search_theses_relevance_drops_zero_coverage(monkeypatch):
+    """Canlı sonuçlarda başlık/yazarda hiç sorgu terimi yoksa (gürültü) elenir."""
+    off_topic = SearchHit(
+        kayit_no="z", tez_no="t", thesis_no=None,
+        title_tr="Din eğitimi açısından anlatı", title_en=None, author="X Y",
+        year=2023, university="MARMARA", thesis_type="Doktora",
+    )
+    on_topic = SearchHit(
+        kayit_no="a", tez_no="t", thesis_no=None,
+        title_tr="Yapay zeka ve hukuk", title_en=None, author="A B",
+        year=2022, university="İSTANBUL", thesis_type="Yüksek Lisans",
+    )
+    monkeypatch.setattr(_search_mod, "search_keyword",
+                        lambda *a, **kw: _async_return(SearchResult(
+                            hits=[off_topic, on_topic], total_found=2, shown=2,
+                            coverage_complete=True, source="live", notes=[]
+                        )))
+    monkeypatch.setattr(_index_mod, "get_default_index", lambda: _EmptyIndex())
+
+    srv = _import_server()
+    result = await srv.search_theses("yapay zeka hukuk")
+    kayits = [r["kayit_no"] for r in result["results"]]
+    assert "a" in kayits
+    assert "z" not in kayits  # sıfır-kapsam gürültü elenir
 
 
 @pytest.mark.asyncio
@@ -823,7 +851,8 @@ async def test_filters_caveat_present_when_live_hits_filtered(monkeypatch):
     monkeypatch.setattr(_index_mod, "get_default_index", lambda: _EmptyIndex())
 
     srv = _import_server()
-    result = await srv.search_theses("zeka", year_from=2018)
+    # 'makine' canlı hit (_HIT_2 'Makine Öğrenmesi') başlığında geçer → alaka filtresinden geçer.
+    result = await srv.search_theses("makine", year_from=2018)
 
     caveat_notes = [n for n in result["notes"] if "client-side" in n or "islem=2" in n]
     assert caveat_notes, "Filtre-caveat notu eksik (live hit + filtre kombinasyonunda olmalı)"
