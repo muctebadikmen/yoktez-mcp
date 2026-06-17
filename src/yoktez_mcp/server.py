@@ -27,7 +27,7 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from . import citations, detail, facets, index, pdf, search
+from . import citations, detail, facets, index, pdf, prompts, search
 from .models import AccessStatus, Thesis
 from .text import tr_fold
 
@@ -358,35 +358,9 @@ async def get_thesis(kayit_no: str, tez_no: str) -> dict:
         raise ToolError("kayit_no ve tez_no zorunludur.")
 
     try:
-        thesis = await detail.get_thesis(kayit_no, tez_no)
+        return await _resolve_thesis(kayit_no, tez_no)
     except Exception as exc:
         raise ToolError(f"Tez alınamadı ({kayit_no}): {type(exc).__name__}") from exc
-
-    result = _thesis_to_dict(thesis)
-
-    # Abstrakt sarma (dış içerik)
-    if thesis.abstract_tr:
-        result["abstract_tr"] = _wrap_external(thesis.abstract_tr)
-    else:
-        result["abstract_tr"] = None
-
-    if thesis.abstract_en:
-        result["abstract_en"] = _wrap_external(thesis.abstract_en)
-    else:
-        result["abstract_en"] = None
-
-    # Kısıtlama nedeni sarma (dış içerik)
-    if thesis.access_reason:
-        result["access_reason"] = _wrap_external(thesis.access_reason)
-    else:
-        result["access_reason"] = None
-
-    # 8 atıf formatı
-    cit_data = citations.from_thesis(thesis)
-    result["citations"] = citations.all_citations(cit_data)
-
-    result["source_notice"] = SOURCE_NOTICE
-    return result
 
 
 @mcp.tool(annotations=READONLY)
@@ -823,6 +797,143 @@ async def get_thesis_references(kayit_no: str, tez_no: str) -> dict:
         "references_text": _wrap_external(ref_section),
         "source_notice": SOURCE_NOTICE,
     }
+
+
+# ---------------------------------------------------------------------------
+# Promptlar
+# ---------------------------------------------------------------------------
+
+prompts.register(mcp)
+
+# ---------------------------------------------------------------------------
+# Kaynaklar (resources) — salt-okunur, dış içerik sarılı
+# ---------------------------------------------------------------------------
+
+# Shared helper: tek bir tezin zengin kaydını döndüren ortak mantık.
+# Hem get_thesis aracı hem de yoktez://thesis/{...} resource'u buraya delege eder.
+
+
+async def _resolve_thesis(kayit_no: str, tez_no: str) -> dict:
+    """get_thesis aracıyla aynı mantık — araç ve resource paylaşır."""
+    thesis = await detail.get_thesis(kayit_no, tez_no)
+    result = _thesis_to_dict(thesis)
+    result["abstract_tr"] = _wrap_external(thesis.abstract_tr) if thesis.abstract_tr else None
+    result["abstract_en"] = _wrap_external(thesis.abstract_en) if thesis.abstract_en else None
+    result["access_reason"] = _wrap_external(thesis.access_reason) if thesis.access_reason else None
+    cit_data = citations.from_thesis(thesis)
+    result["citations"] = citations.all_citations(cit_data)
+    result["source_notice"] = SOURCE_NOTICE
+    return result
+
+
+async def _resolve_advisor(name: str, limit: int = 20) -> dict:
+    """find_advisor_theses aracıyla aynı mantık — araç ve resource paylaşır."""
+    live_hits: list = []
+    live_error: str | None = None
+    live_total = 0
+    live_complete = True
+    try:
+        live_result = await search.search_keyword(name, field="advisor", match="contains")
+        live_hits = live_result.hits
+        live_total = live_result.total_found
+        live_complete = live_result.coverage_complete
+    except Exception as exc:
+        live_error = f"{type(exc).__name__}: {exc}"
+
+    idx = index.get_default_index()
+    idx_result = idx.by_advisor(name, limit=limit * 2)
+
+    all_hits = _dedupe_hits(idx_result.hits + live_hits)
+    page = all_hits[:limit]
+
+    source = "hybrid" if (live_hits and idx_result.hits) else ("live" if live_hits else "index")
+    notes: list[str] = []
+    if live_error:
+        notes.append(f"Canlı YÖKTEZ sorgusu başarısız: {live_error}. Yalnızca indeks kullanıldı.")
+    if not live_complete:
+        notes.append(
+            f"YÖKTEZ sonuçları 2000-cap ile sınırlı ({live_total} toplam, {len(live_hits)} gösteriliyor)."
+        )
+    if not page:
+        notes.append("Bu danışman için sonuç bulunamadı.")
+
+    return {
+        "advisor_query": name,
+        "source": source,
+        "total_found": live_total,
+        "coverage_complete": live_complete,
+        "count": len(page),
+        "results": [_hit_to_dict(h) for h in page],
+        "notes": notes,
+        "source_notice": SOURCE_NOTICE,
+    }
+
+
+async def _resolve_university(name: str, limit: int = 50) -> dict:
+    """list_university_theses aracıyla aynı mantık — araç ve resource paylaşır."""
+    idx = index.get_default_index()
+    result = idx.by_university(name, limit=limit)
+
+    notes: list[str] = [
+        "Canlı üniversite bazlı arama (islem=2) şu an kullanılamıyor (sunucu hatası). "
+        "Yalnızca yerel indeks kullanıldı."
+    ]
+    if result.total_found == 0:
+        notes.append(
+            "İndekste bu üniversite için tez bulunamadı. "
+            "Olası nedenler: (1) seed indeksi henüz derlenmedi, "
+            "(2) üniversite adı farklı yazılmış olabilir."
+        )
+
+    return {
+        "university_query": name,
+        "source": "index",
+        "total_found": result.total_found,
+        "count": len(result.hits),
+        "results": [_hit_to_dict(h) for h in result.hits],
+        "notes": notes,
+        "source_notice": SOURCE_NOTICE,
+    }
+
+
+@mcp.resource(
+    "yoktez://thesis/{kayit_no}/{tez_no}",
+    description=(
+        "Bir tezin zengin kaydı (özet, danışman, atıf formatları). "
+        "kayit_no ve tez_no arama sonuçlarındaki data-kayitno / data-tezno değerleridir."
+    ),
+    mime_type="application/json",
+)
+async def resource_thesis(kayit_no: str, tez_no: str) -> dict:
+    """yoktez://thesis/{kayit_no}/{tez_no} — get_thesis ile aynı mantık."""
+    return await _resolve_thesis(kayit_no, tez_no)
+
+
+@mcp.resource(
+    "yoktez://advisor/{name}",
+    description=(
+        "Bir danışmanın tüm tezleri — hibrit (yerel indeks + canlı YÖKTEZ). "
+        "Akademik ekol ve soy ağacı analizi için durable URI."
+    ),
+    mime_type="application/json",
+)
+async def resource_advisor(name: str) -> dict:
+    """yoktez://advisor/{name} — find_advisor_theses ile aynı mantık."""
+    return await _resolve_advisor(name)
+
+
+@mcp.resource(
+    "yoktez://university/{name}",
+    description=(
+        "Bir üniversitenin tezleri — yalnızca yerel indeks "
+        "(islem=2 sunucu taraflı filtre şu an kullanılamıyor). "
+        "Kapsam sınırlamaları dürüstçe bildirilir."
+    ),
+    mime_type="application/json",
+)
+async def resource_university(name: str) -> dict:
+    """yoktez://university/{name} — list_university_theses ile aynı mantık."""
+    return await _resolve_university(name)
 
 
 # ---------------------------------------------------------------------------

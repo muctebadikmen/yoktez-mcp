@@ -808,6 +808,86 @@ async def test_source_index_when_live_succeeds_but_empty(monkeypatch):
 # ---------------------------------------------------------------------------
 # Yardımcılar
 # ---------------------------------------------------------------------------
+# Resource testleri (offline)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_server_has_prompts_registered():
+    """prompts.register(mcp) wired → 4 prompt kaydedilmiş olmalı."""
+    import yoktez_mcp.server as srv
+
+    prompts = await srv.mcp.list_prompts()
+    prompt_names = {p.name for p in prompts}
+    expected = {
+        "tez_literatur_taramasi",
+        "tez_ozeti",
+        "danisman_ekol_analizi",
+        "universite_uretim_haritasi",
+    }
+    assert expected <= prompt_names, (
+        f"Eksik promptlar: {expected - prompt_names}. Kayıtlılar: {prompt_names}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_server_has_resource_templates():
+    """3 resource template (thesis, advisor, university) kayıtlı olmalı."""
+    import yoktez_mcp.server as srv
+
+    templates = await srv.mcp.list_resource_templates()
+    uris = {t.uri_template for t in templates}
+    assert "yoktez://thesis/{kayit_no}/{tez_no}" in uris, f"thesis resource yok: {uris}"
+    assert "yoktez://advisor/{name}" in uris, f"advisor resource yok: {uris}"
+    assert "yoktez://university/{name}" in uris, f"university resource yok: {uris}"
+
+
+@pytest.mark.asyncio
+async def test_thesis_resource_returns_wrapped_content(monkeypatch):
+    """yoktez://thesis/{kayit_no}/{tez_no} → get_thesis mantığını kullanır, dış içerik sarılır."""
+    monkeypatch.setattr(_detail_mod, "get_thesis",
+                        lambda *a, **kw: _async_return(_OPEN_THESIS))
+
+    import yoktez_mcp.server as srv
+
+    result = await srv.mcp.read_resource("yoktez://thesis/111/t111")
+    # result is ResourceContent or similar; convert to string
+    content_str = str(result)
+    assert "source_notice" in content_str or "YÖKTEZ" in content_str or "Yapay Zeka" in content_str
+    # Must include [EXTERNAL CONTENT] marker somewhere
+    assert "[EXTERNAL CONTENT" in content_str or "abstract" in content_str
+
+
+@pytest.mark.asyncio
+async def test_advisor_resource_returns_source_notice(monkeypatch):
+    """yoktez://advisor/{name} → find_advisor_theses mantığını kullanır."""
+    monkeypatch.setattr(_search_mod, "search_keyword",
+                        lambda *a, **kw: _async_return(SearchResult(
+                            hits=[_HIT_1], total_found=1, shown=1,
+                            coverage_complete=True, source="live", notes=[]
+                        )))
+    monkeypatch.setattr(_index_mod, "get_default_index", lambda: _EmptyIndex())
+
+    import yoktez_mcp.server as srv
+
+    result = await srv.mcp.read_resource("yoktez://advisor/Ahmet%20Y%C4%B1lmaz")
+    content_str = str(result)
+    assert "source_notice" in content_str or "YÖKTEZ" in content_str or "advisor" in content_str
+
+
+@pytest.mark.asyncio
+async def test_university_resource_returns_index_note(monkeypatch):
+    """yoktez://university/{name} → list_university_theses mantığını kullanır."""
+    monkeypatch.setattr(_index_mod, "get_default_index", lambda: _EmptyIndex())
+
+    import yoktez_mcp.server as srv
+
+    result = await srv.mcp.read_resource("yoktez://university/%C4%B0stanbul")
+    content_str = str(result)
+    assert "source_notice" in content_str or "index" in content_str or "YÖKTEZ" in content_str
+
+
+# ---------------------------------------------------------------------------
 
 async def _async_return(value):
     """Sabit bir değeri döndüren coroutine."""
