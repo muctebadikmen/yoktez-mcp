@@ -1,0 +1,54 @@
+[project]
+name = "yoktez-mcp"
+version = "0.1.0"
+description = "YÖK Ulusal Tez Merkezi (tez.yok.gov.tr) için Model Context Protocol (MCP) sunucusu — Türkçe bilinçli FTS5 dizin + canlı sorgulama hibrid mimarisi."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "muctebadikmen" }]
+keywords = ["mcp", "yoktez", "yok", "thesis", "academic", "turkish", "llm"]
+
+dependencies = [
+    "fastmcp>=3.4",
+    "httpx>=0.27",
+    "beautifulsoup4>=4.12",
+    "pypdf>=4.2",
+    "platformdirs>=4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+yoktez-mcp = "yoktez_mcp.server:main"
+yoktez-mcp-serve = "yoktez_mcp.server:serve_http"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/yoktez_mcp"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/yoktez_mcp/data/facets.json" = "yoktez_mcp/data/facets.json"
+"src/yoktez_mcp/data/seed_index.db.gz" = "yoktez_mcp/data/seed_index.db.gz"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = [
+    "live: ağ erişimi gerektiren canlı entegrasyon testleri (deselect: -m 'not live')",
+]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+extend-exclude = ["src/yoktez_mcp/data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B"]
+ignore = ["E501", "B008"]
