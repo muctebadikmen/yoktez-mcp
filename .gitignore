@@ -28,6 +28,9 @@ scripts/_build/
 *.db
 !*.db.gz
 
+# Harvest resume checkpoint (build artifact)
+.harvest_checkpoint.json
+
 # Faz 0 raw probe captures — multi-MB; kept on disk for deriving trimmed test
 # fixtures + building facets.json, but not committed. Trimmed fixtures ARE committed.
 tests/fixtures/faz0/search_keyword_islem4.html
